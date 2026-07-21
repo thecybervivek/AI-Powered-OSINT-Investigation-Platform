@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual Environment
+.venv/
+venv/
+
+# Environment Variables
+.env
+.env.*
+
+# Logs
+*.log
+
+# Database
+*.db
+*.sqlite3
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Test & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+
+# Build
+dist/
+build/
+
+# Docker
+*.pid 
