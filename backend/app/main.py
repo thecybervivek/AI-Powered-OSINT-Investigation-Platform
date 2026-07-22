@@ -6,20 +6,18 @@ from fastapi.responses import JSONResponse
 
 from backend.app.api.v1.router import api_router
 from backend.app.core.config import settings
-from backend.app.db.database import create_database
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-
     print("=" * 60)
     print(f"Starting {settings.APP_NAME}")
     print(f"Environment : {settings.ENVIRONMENT}")
     print(f"Version     : {settings.APP_VERSION}")
     print("=" * 60)
 
-    # Create database tables
-    create_database()
+    # Database schema is managed by Alembic migrations.
+    # Do NOT call Base.metadata.create_all() in production.
 
     yield
 
@@ -49,7 +47,6 @@ app.add_middleware(
 
 @app.get("/", tags=["Home"])
 async def home():
-
     return {
         "success": True,
         "application": settings.APP_NAME,
@@ -61,7 +58,6 @@ async def home():
 
 @app.get("/health", tags=["Health"])
 async def health():
-
     return {
         "status": "healthy",
         "application": settings.APP_NAME,
@@ -71,7 +67,6 @@ async def health():
 
 @app.get("/ping", tags=["Health"])
 async def ping():
-
     return JSONResponse(
         status_code=200,
         content={
