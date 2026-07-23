@@ -56,6 +56,36 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173",
     ]
 
+    # ------------------------------------------------------
+    # OSINT Module Configuration (Milestones 2-4)
+    # ------------------------------------------------------
+
+    # Outbound HTTP behaviour shared by every integration.
+    OSINT_HTTP_USER_AGENT: str = (
+        "AI-OSINT-Investigation-Platform/1.0 (+compliance-scan)"
+    )
+    OSINT_REQUEST_TIMEOUT_SECONDS: float = 8.0
+    OSINT_MAX_RETRIES: int = 2
+    OSINT_RETRY_BACKOFF_SECONDS: float = 0.5
+
+    # Milestone 2 - Username Intelligence
+    USERNAME_CHECK_TIMEOUT_SECONDS: float = 6.0
+    USERNAME_MAX_CONCURRENCY: int = 20
+
+    # Milestone 3 - Email Intelligence
+    EMAILREP_API_KEY: str = ""
+    EMAILREP_BASE_URL: str = "https://emailrep.io"
+    HIBP_API_KEY: str = ""
+    HIBP_BASE_URL: str = "https://haveibeenpwned.com/api/v3"
+    GRAVATAR_BASE_URL: str = "https://www.gravatar.com"
+
+    # Milestone 4 - Domain / IP / DNS Intelligence
+    DNS_RESOLVER_TIMEOUT_SECONDS: float = 5.0
+    WHOIS_TIMEOUT_SECONDS: float = 8.0
+    SSL_CHECK_TIMEOUT_SECONDS: float = 6.0
+    IP_GEOLOCATION_BASE_URL: str = "http://ip-api.com/json"
+    IPINFO_API_TOKEN: str = ""
+
 
 @lru_cache
 def get_settings():

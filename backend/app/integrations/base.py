@@ -30,6 +30,76 @@ class IntegrationResult:
     error_message: str | None = None
 
 
+class AsyncBaseIntegration(ABC):
+    """
+    Async counterpart to BaseIntegration for sources that need to run
+    concurrently (e.g. fanning a single username out across dozens of
+    platforms). Mirrors the same is_configured()/_query() contract and
+    the same normalized-result + error-handling guarantees, just on the
+    asyncio event loop instead of a blocking httpx.Client.
+    """
+
+    source_name: str = "base_async"
+    timeout_seconds: float = 10.0
+
+    @abstractmethod
+    def is_configured(self) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def _query(self, target: str) -> IntegrationResult:
+        raise NotImplementedError
+
+    async def run(self, target: str) -> IntegrationResult:
+
+        if not self.is_configured():
+
+            return IntegrationResult(
+                source=self.source_name,
+                status=ModuleResultStatus.SKIPPED,
+                error_message=(
+                    f"{self.source_name} is not configured "
+                    f"(missing API key/setting)."
+                ),
+            )
+
+        start = time.perf_counter()
+
+        try:
+            result = await self._query(target)
+            result.latency_ms = round((time.perf_counter() - start) * 1000)
+            return result
+
+        except IntegrationTimeoutError as error:
+
+            logger.warning(
+                "Async integration timed out.",
+                extra={"event": f"{self.source_name}_timeout"},
+            )
+
+            return IntegrationResult(
+                source=self.source_name,
+                status=ModuleResultStatus.FAILED,
+                latency_ms=round((time.perf_counter() - start) * 1000),
+                error_message=str(error),
+            )
+
+        except Exception as error:
+
+            logger.warning(
+                "Async integration call failed: %s",
+                error,
+                extra={"event": f"{self.source_name}_error"},
+            )
+
+            return IntegrationResult(
+                source=self.source_name,
+                status=ModuleResultStatus.FAILED,
+                latency_ms=round((time.perf_counter() - start) * 1000),
+                error_message=str(error),
+            )
+
+
 class BaseIntegration(ABC):
     """
     Every third-party OSINT source (Sherlock, Maigret, WhatsMyName, Holehe,
