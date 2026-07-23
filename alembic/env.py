@@ -21,6 +21,8 @@ from backend.app.core.config import settings
 # --------------------------------------------------
 from backend.app.models.base import BaseModel
 from backend.app.models.user import User
+from backend.app.models.investigation import Investigation
+from backend.app.models.investigation import InvestigationResult
 
 # --------------------------------------------------
 # Alembic Config

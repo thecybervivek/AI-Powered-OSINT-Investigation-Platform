@@ -6,10 +6,15 @@ from fastapi.responses import JSONResponse
 
 from backend.app.api.v1.router import api_router
 from backend.app.core.config import settings
+from backend.app.core.logging_config import configure_logging
+from backend.app.middleware.logging_middleware import RequestLoggingMiddleware
+from backend.app.middleware.security_headers import SecurityHeadersMiddleware
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_logging(debug=settings.DEBUG)
+
     print("=" * 60)
     print(f"Starting {settings.APP_NAME}")
     print(f"Environment : {settings.ENVIRONMENT}")
@@ -43,6 +48,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Middleware executes bottom-up relative to add_middleware() calls, so
+# SecurityHeadersMiddleware (added last) runs first on the request path.
+app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 @app.get("/", tags=["Home"])
