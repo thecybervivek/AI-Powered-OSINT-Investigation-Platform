@@ -3,10 +3,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from backend.app.api.v1.router import api_router
 from backend.app.core.config import settings
 from backend.app.core.logging_config import configure_logging
+from backend.app.core.rate_limit import limiter
 from backend.app.middleware.logging_middleware import RequestLoggingMiddleware
 from backend.app.middleware.security_headers import SecurityHeadersMiddleware
 
@@ -48,6 +52,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ==========================================================
+# Rate Limiting (Milestone 5)
+# ==========================================================
+# app.state.limiter is the attribute slowapi's internals look up on
+# every request; the exception handler turns an exceeded limit into a
+# clean 429 JSON response instead of an unhandled error.
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 # Middleware executes bottom-up relative to add_middleware() calls, so
 # SecurityHeadersMiddleware (added last) runs first on the request path.
