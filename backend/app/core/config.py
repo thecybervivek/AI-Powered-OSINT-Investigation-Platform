@@ -155,6 +155,20 @@ class Settings(BaseSettings):
     YARA_RULES_DIR: str = "backend/app/integrations/file/yara_rules"
     YARA_SCAN_TIMEOUT_SECONDS: float = 15.0
 
+    # ------------------------------------------------------
+    # Milestone 7 - AI Investigation & Report Engine
+    # ------------------------------------------------------
+
+    # OpenAI is fully optional. Without OPENAI_API_KEY, the AI Analysis
+    # Engine automatically and silently falls back to the deterministic
+    # local analyzer - report generation never fails for lack of a key.
+    OPENAI_API_KEY: str = ""
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
+    OPENAI_MODEL: str = "gpt-4o-mini"
+    OPENAI_REQUEST_TIMEOUT_SECONDS: float = 30.0
+
+    REPORT_PDF_STORAGE_DIR: str = "storage/reports"
+
 
 @lru_cache
 def get_settings():

@@ -37,6 +37,7 @@ class InvestigationType(str, Enum):
     PHONE = "phone"
     METADATA = "metadata"
     REVERSE_IMAGE = "reverse_image"
+    FILE = "file"
 
 
 class InvestigationStatus(str, Enum):

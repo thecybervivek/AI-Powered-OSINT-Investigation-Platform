@@ -43,3 +43,5 @@ build/
 
 # Docker
 *.pid 
+# TypeScript build cache
+*.tsbuildinfo

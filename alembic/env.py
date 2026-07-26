@@ -23,6 +23,8 @@ from backend.app.models.base import BaseModel
 from backend.app.models.user import User
 from backend.app.models.investigation import Investigation
 from backend.app.models.investigation import InvestigationResult
+from backend.app.models.file_record import FileRecord
+from backend.app.models.report import Report
 
 # --------------------------------------------------
 # Alembic Config

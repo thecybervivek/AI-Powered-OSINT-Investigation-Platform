@@ -4,6 +4,8 @@ from backend.app.api.v1.endpoints.auth import router as auth_router
 from backend.app.api.v1.endpoints.domain import router as domain_router
 from backend.app.api.v1.endpoints.email import router as email_router
 from backend.app.api.v1.endpoints.file import router as file_router
+from backend.app.api.v1.endpoints.report import router as report_router
+from backend.app.api.v1.endpoints.investigation import router as investigation_router
 from backend.app.api.v1.endpoints.health import router as health_router
 from backend.app.api.v1.endpoints.ioc import router as ioc_router
 from backend.app.api.v1.endpoints.ip import router as ip_router
@@ -32,6 +34,16 @@ api_router.include_router(
 )
 
 # ==========================================================
+# Investigation History Endpoints (cross-module list/get/delete)
+# ==========================================================
+
+api_router.include_router(
+    investigation_router,
+    prefix="/investigations",
+    tags=["Investigation History"],
+)
+
+# ==========================================================
 # Username Intelligence Endpoints (Milestone 2)
 # ==========================================================
 
@@ -52,7 +64,7 @@ api_router.include_router(
 )
 
 # ==========================================================
-# Domain Intelligence Endpoints (Milestone 4)
+# Domain / IP / DNS Intelligence Endpoints (Milestone 4)
 # ==========================================================
 
 api_router.include_router(
@@ -90,7 +102,6 @@ api_router.include_router(
     prefix="/investigations/ioc",
     tags=["IOC Analysis"],
 )
-
 # ==========================================================
 # File Intelligence Endpoints (Milestone 6)
 # ==========================================================
@@ -99,4 +110,14 @@ api_router.include_router(
     file_router,
     prefix="/investigations/file",
     tags=["File Intelligence"],
+)
+
+# ==========================================================
+# Report Endpoints (Milestone 7)
+# ==========================================================
+
+api_router.include_router(
+    report_router,
+    prefix="/reports",
+    tags=["AI Investigation Reports"],
 )
