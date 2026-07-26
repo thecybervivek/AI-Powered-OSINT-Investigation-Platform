@@ -100,11 +100,12 @@ def validate_upload(
         and extensions[-1] not in _DOCUMENT_LIKE_EXTENSIONS
     )
 
-    if has_double_extension:
-        errors.append(
-            f"Double extension detected ('{''.join(extensions[-2:])}') — "
-            f"this pattern is commonly used to disguise executables."
-        )
+    # Double extension is a strong RISK signal (fed into the risk engine
+    # in the service layer) but not, on its own, grounds to reject the
+    # upload outright - analysts often specifically want to investigate
+    # a file *because* it looks like "invoice.pdf.html". A file whose
+    # final extension is on the hard block list above is still rejected
+    # either way via `suspicious_extension`.
 
     detected_mime_type: str | None = None
 
