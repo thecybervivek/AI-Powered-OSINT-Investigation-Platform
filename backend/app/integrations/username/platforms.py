@@ -55,6 +55,7 @@ PLATFORM_CATALOGUE: list[PlatformDefinition] = [
     PlatformDefinition("Pinterest", "social", "https://www.pinterest.com/{}/", DetectionMethod.STATUS_CODE),
     PlatformDefinition("Tumblr", "social", "https://{}.tumblr.com/", DetectionMethod.STATUS_CODE),
     PlatformDefinition("LinkedIn", "social", "https://www.linkedin.com/in/{}", DetectionMethod.STATUS_CODE),
+    PlatformDefinition("HackerOne", "security", "https://hackerone.com/{}", DetectionMethod.STATUS_CODE),
     PlatformDefinition("Snapchat", "social", "https://www.snapchat.com/add/{}", DetectionMethod.ERROR_STRING_IN_BODY, "not found"),
     PlatformDefinition("VKontakte", "social", "https://vk.com/{}", DetectionMethod.ERROR_STRING_IN_BODY, "not been found"),
     PlatformDefinition("Threads", "social", "https://www.threads.net/@{}", DetectionMethod.ERROR_STRING_IN_BODY, "Sorry, this page"),
@@ -106,3 +107,16 @@ def whatsmyname_platforms() -> list[PlatformDefinition]:
         p for p in PLATFORM_CATALOGUE
         if p.category in {"development", "gaming", "identity", "media"}
     ]
+
+
+def social_media_platforms() -> list[PlatformDefinition]:
+    """Public-profile catalogue used by Social Media Intelligence.
+
+    Kept explicit rather than category-based so changes to the broader
+    username catalogue cannot silently change this module's contract.
+    """
+    required = {
+        "GitHub", "LinkedIn", "X (Twitter)", "Instagram",
+        "Facebook", "Reddit", "Medium", "HackerOne",
+    }
+    return [p for p in PLATFORM_CATALOGUE if p.name in required]

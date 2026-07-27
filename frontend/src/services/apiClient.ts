@@ -4,29 +4,21 @@ import axios, {
 } from "axios";
 
 const ACCESS_TOKEN_KEY = "osint_access_token";
-const REFRESH_TOKEN_KEY = "osint_refresh_token";
 
 export const tokenStorage = {
   getAccessToken: () => localStorage.getItem(ACCESS_TOKEN_KEY),
-  getRefreshToken: () => localStorage.getItem(REFRESH_TOKEN_KEY),
-  setTokens: (accessToken: string, refreshToken: string) => {
-    localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
-    localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
-  },
+  setTokens: (accessToken: string) => { localStorage.setItem(ACCESS_TOKEN_KEY, accessToken); },
   setAccessToken: (accessToken: string) => {
     localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
   },
   clear: () => {
     localStorage.removeItem(ACCESS_TOKEN_KEY);
-    localStorage.removeItem(REFRESH_TOKEN_KEY);
   },
 };
 
 export const apiClient = axios.create({
   baseURL: "/api/v1",
-  headers: {
-    "Content-Type": "application/json",
-  },
+  withCredentials: true,
 });
 
 apiClient.interceptors.request.use((config) => {
@@ -81,14 +73,6 @@ apiClient.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    const refreshToken = tokenStorage.getRefreshToken();
-
-    if (!refreshToken) {
-      tokenStorage.clear();
-      window.location.href = "/login";
-      return Promise.reject(error);
-    }
-
     if (isRefreshing) {
       return new Promise((resolve, reject) => {
         pendingQueue.push({
@@ -105,9 +89,7 @@ apiClient.interceptors.response.use(
     isRefreshing = true;
 
     try {
-      const response = await axios.post("/api/v1/refresh", {
-        refresh_token: refreshToken,
-      });
+      const response = await axios.post("/api/v1/refresh", undefined, { withCredentials: true });
 
       const newAccessToken = response.data.access_token as string;
       tokenStorage.setAccessToken(newAccessToken);

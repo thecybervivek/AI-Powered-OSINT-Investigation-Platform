@@ -8,7 +8,12 @@ export type InvestigationType =
   | "phone"
   | "metadata"
   | "reverse_image"
-  | "file";
+  | "file"
+  | "breach"
+  | "threat_intelligence"
+  | "social_media"
+  | "risk_assessment"
+  | "malware";
 
 export type InvestigationStatus =
   | "queued"

@@ -53,7 +53,7 @@ async def investigate_url(
 
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"URL investigation failed: {error}",
+            detail="URL investigation failed",
         )
 
     return investigation

@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import File
@@ -5,7 +7,6 @@ from fastapi import HTTPException
 from fastapi import Request
 from fastapi import UploadFile
 from fastapi import status
-
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import settings
@@ -17,6 +18,9 @@ from backend.app.repositories.file_repository import FileRecordRepository
 from backend.app.repositories.investigation_repository import InvestigationRepository
 from backend.app.schemas.file import FileInvestigationResponse
 from backend.app.services.file_service import FileIntelligenceService
+
+
+logger = logging.getLogger("app.api.file")
 
 router = APIRouter()
 
@@ -38,12 +42,12 @@ async def upload_file(
     db: Session = Depends(get_db),
 ):
     """
-    Accepts a single file upload, validates it (size ceiling, blocked
-    extensions, double-extension disguises, magic-byte MIME sniffing),
-    computes MD5/SHA1/SHA256/SHA512, extracts type-specific metadata
-    (EXIF for images; document properties for PDF/DOCX/PPTX/XLSX), and
-    builds a creation/modification timeline - then persists everything
-    as a File investigation.
+    Accepts a single file upload and runs the complete file-intelligence
+    pipeline.
+
+    Expected validation failures are returned as client errors.
+    Unexpected failures are logged server-side with the complete
+    traceback while the API returns a sanitized error response.
     """
 
     service = FileIntelligenceService(db)
@@ -54,12 +58,34 @@ async def upload_file(
             upload=file,
         )
 
-    except Exception as error:
+    except ValueError as error:
+        logger.warning(
+            "File investigation rejected for user_id=%s filename=%r: %s",
+            current_user.id,
+            file.filename,
+            error,
+        )
 
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"File investigation failed: {error}",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
+
+    except HTTPException:
+        raise
+
+    except Exception as error:
+        logger.exception(
+            "Unexpected file investigation failure for "
+            "user_id=%s filename=%r",
+            current_user.id,
+            file.filename,
         )
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="File investigation failed due to an internal server error.",
+        ) from error
 
     return FileInvestigationResponse(
         investigation=investigation,
@@ -80,7 +106,6 @@ def get_file_investigation(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-
     investigation_repository = InvestigationRepository(db)
     file_repository = FileRecordRepository(db)
 
@@ -90,16 +115,16 @@ def get_file_investigation(
     )
 
     if investigation is None:
-
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Investigation not found.",
         )
 
-    file_record = file_repository.get_by_investigation(investigation_id)
+    file_record = file_repository.get_by_investigation(
+        investigation_id
+    )
 
     if file_record is None:
-
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File record not found for this investigation.",

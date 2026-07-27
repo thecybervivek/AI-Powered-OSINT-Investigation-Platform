@@ -1,47 +1,34 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-
-# Virtual Environment
-.venv/
-venv/
-
-# Environment Variables
+# Secrets / local configuration
 .env
 .env.*
+!.env.example
 
-# Logs
-*.log
-
-# Database
-*.db
-*.sqlite3
-
-# VS Code
-.vscode/
-
-# macOS
-.DS_Store
-
-# Windows
-Thumbs.db
-Desktop.ini
-
-# Test & Coverage
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
 .pytest_cache/
 .coverage
 htmlcov/
 
-# Node
-node_modules/
+# Databases, logs, generated storage
+*.db
+*.sqlite3
+*.log
+storage/
 
-# Build
+# Frontend
+frontend/node_modules/
+frontend/dist/
+node_modules/
 dist/
 build/
-
-# Docker
-*.pid 
-# TypeScript build cache
 *.tsbuildinfo
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini

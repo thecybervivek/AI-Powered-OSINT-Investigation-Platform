@@ -48,7 +48,7 @@ async def investigate_email(
 
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Email investigation failed: {error}",
+            detail="Email investigation failed",
         )
 
     return investigation

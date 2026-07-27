@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -11,6 +12,7 @@ from backend.app.api.v1.router import api_router
 from backend.app.core.config import settings
 from backend.app.core.logging_config import configure_logging
 from backend.app.core.rate_limit import limiter
+from backend.app.db.database import database_health
 from backend.app.middleware.logging_middleware import RequestLoggingMiddleware
 from backend.app.middleware.security_headers import SecurityHeadersMiddleware
 
@@ -40,10 +42,12 @@ app = FastAPI(
     version=settings.APP_VERSION,
     description=settings.APP_DESCRIPTION,
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json",
+    docs_url="/docs" if settings.ENABLE_API_DOCS else None,
+    redoc_url="/redoc" if settings.ENABLE_API_DOCS else None,
+    openapi_url="/openapi.json" if settings.ENABLE_API_DOCS else None,
 )
+
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.TRUSTED_HOSTS)
 
 app.add_middleware(
     CORSMiddleware,
@@ -83,11 +87,16 @@ async def home():
 
 @app.get("/health", tags=["Health"])
 async def health():
-    return {
-        "status": "healthy",
-        "application": settings.APP_NAME,
-        "version": settings.APP_VERSION,
-    }
+    """Liveness probe: proves the application process is serving requests."""
+    return {"status": "healthy", "application": settings.APP_NAME, "version": settings.APP_VERSION}
+
+
+@app.get("/ready", tags=["Health"])
+async def ready():
+    """Readiness probe: only healthy when the database is reachable."""
+    if not database_health():
+        return JSONResponse(status_code=503, content={"status": "not_ready", "database": "unavailable"})
+    return {"status": "ready", "database": "healthy"}
 
 
 @app.get("/ping", tags=["Health"])

@@ -1,6 +1,3 @@
-from jose import JWTError
-from jose import jwt
-
 from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import status
@@ -10,8 +7,10 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import settings
+from backend.app.core.security import decode_token
 from backend.app.db.database import get_db
 from backend.app.models.user import User
+from backend.app.models.user import UserRole
 
 
 oauth2_scheme = OAuth2PasswordBearer(
@@ -36,29 +35,10 @@ def get_current_user(
         },
     )
 
-    try:
-
-        payload = jwt.decode(
-            token,
-            settings.SECRET_KEY,
-            algorithms=[
-                settings.JWT_ALGORITHM,
-            ],
-        )
-
-        user_id = payload.get("sub")
-
-        token_type = payload.get("type")
-
-        if user_id is None:
-            raise credentials_exception
-
-        if token_type != "access":
-            raise credentials_exception
-
-    except JWTError:
-
+    payload = decode_token(token)
+    if payload is None or payload.get("type") != "access" or not payload.get("sub"):
         raise credentials_exception
+    user_id = payload["sub"]
 
     user = (
         db.query(User)
@@ -105,7 +85,7 @@ def require_admin(
     current_user: User = Depends(get_current_user),
 ) -> User:
 
-    if str(current_user.role).lower() != "admin":
+    if current_user.role != UserRole.ADMIN:
 
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

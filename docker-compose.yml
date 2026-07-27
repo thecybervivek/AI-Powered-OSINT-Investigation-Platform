@@ -1,0 +1,82 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: osint
+      POSTGRES_USER: osint
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U osint -d osint"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    env_file: .env
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      REFRESH_COOKIE_SECURE: "true"
+      RATE_LIMIT_BACKEND: redis
+      REDIS_HOST: redis
+      DATABASE_URL: postgresql+psycopg://osint:${POSTGRES_PASSWORD:-change-me}@db:5432/osint
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      REFRESH_COOKIE_SECURE: "true"
+      RATE_LIMIT_BACKEND: redis
+      REDIS_HOST: redis
+      DATABASE_URL: postgresql+psycopg://osint:${POSTGRES_PASSWORD:-change-me}@db:5432/osint
+      ENABLE_API_DOCS: "false"
+      TRUSTED_HOSTS: '${TRUSTED_HOSTS:-["localhost","127.0.0.1"]}'
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "8000:8000"
+    volumes:
+      - app_storage:/app/storage
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  app_storage:

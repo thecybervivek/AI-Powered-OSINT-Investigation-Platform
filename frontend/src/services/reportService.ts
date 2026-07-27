@@ -58,7 +58,16 @@ export const reportService = {
     return response.data;
   },
 
-  getPdfDownloadUrl(id: string): string {
-    return `/api/v1/reports/${id}?format=pdf`;
+  async downloadPdfToBrowser(id: string, filename = `report-${id}.pdf`): Promise<void> {
+    const blob = await this.downloadPdf(id);
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = filename;
+      anchor.click();
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
   },
 };

@@ -54,7 +54,7 @@ async def investigate_ip(
 
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"IP investigation failed: {error}",
+            detail="IP investigation failed",
         )
 
     return investigation

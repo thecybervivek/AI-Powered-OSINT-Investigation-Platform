@@ -2,6 +2,8 @@ import os
 import uuid
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///./test_platform.db")
+os.environ.setdefault("ENVIRONMENT", "testing")
+os.environ.setdefault("TRUSTED_HOSTS", '["localhost","127.0.0.1","testserver"]')
 
 import pytest
 from fastapi.testclient import TestClient

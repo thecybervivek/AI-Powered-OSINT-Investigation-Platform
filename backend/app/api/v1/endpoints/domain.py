@@ -63,7 +63,7 @@ async def investigate_domain(
 
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Domain investigation failed: {error}",
+            detail="Domain investigation failed",
         )
 
     return investigation

@@ -51,6 +51,8 @@ def _rate_limit_key(request: Request) -> str:
                 token,
                 settings.SECRET_KEY,
                 algorithms=[settings.JWT_ALGORITHM],
+                issuer=settings.JWT_ISSUER,
+                audience=settings.JWT_AUDIENCE,
             )
             user_id = payload.get("sub")
 

@@ -1,6 +1,14 @@
 from fastapi import APIRouter
 
 from backend.app.api.v1.endpoints.auth import router as auth_router
+from backend.app.api.v1.endpoints.breach import router as breach_router
+from backend.app.api.v1.endpoints.composite_risk import router as composite_risk_router
+from backend.app.api.v1.endpoints.dns_intelligence import router as dns_intelligence_router
+from backend.app.api.v1.endpoints.malware_intelligence import router as malware_intelligence_router
+from backend.app.api.v1.endpoints.phone import router as phone_router
+from backend.app.api.v1.endpoints.reverse_image import router as reverse_image_router
+from backend.app.api.v1.endpoints.social_media import router as social_media_router
+from backend.app.api.v1.endpoints.threat_intelligence import router as threat_intelligence_router
 from backend.app.api.v1.endpoints.domain import router as domain_router
 from backend.app.api.v1.endpoints.email import router as email_router
 from backend.app.api.v1.endpoints.file import router as file_router
@@ -121,3 +129,16 @@ api_router.include_router(
     prefix="/reports",
     tags=["AI Investigation Reports"],
 )
+
+
+# ==========================================================
+# Milestone 9 - Advanced Intelligence Endpoints
+# ==========================================================
+api_router.include_router(phone_router, prefix="/investigations/phone", tags=["Phone Intelligence"])
+api_router.include_router(reverse_image_router, prefix="/investigations/reverse-image", tags=["Reverse Image Intelligence"])
+api_router.include_router(social_media_router, prefix="/investigations/social-media", tags=["Social Media Intelligence"])
+api_router.include_router(breach_router, prefix="/investigations/breach", tags=["Breach Intelligence"])
+api_router.include_router(threat_intelligence_router, prefix="/investigations/threat-intelligence", tags=["Threat Intelligence"])
+api_router.include_router(dns_intelligence_router, prefix="/investigations/dns-intelligence", tags=["DNS Intelligence"])
+api_router.include_router(malware_intelligence_router, prefix="/investigations/malware", tags=["Malware Intelligence"])
+api_router.include_router(composite_risk_router, prefix="/investigations/risk-assessment", tags=["Composite Risk Engine"])

@@ -16,10 +16,7 @@ export const authService = {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
     });
 
-    tokenStorage.setTokens(
-      response.data.access_token,
-      response.data.refresh_token
-    );
+    tokenStorage.setAccessToken(response.data.access_token);
 
     return response.data;
   },

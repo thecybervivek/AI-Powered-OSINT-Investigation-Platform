@@ -6,7 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import { authService } from "@/services/authService";
-import { tokenStorage } from "@/services/apiClient";
+import { apiClient, tokenStorage } from "@/services/apiClient";
 import type { LoginRequest, RegisterRequest, User } from "@/types/auth";
 
 interface AuthContextValue {
@@ -26,12 +26,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     async function bootstrap() {
-      if (!tokenStorage.getAccessToken()) {
-        setIsLoading(false);
-        return;
-      }
-
       try {
+        if (!tokenStorage.getAccessToken()) {
+          await apiClient.post("/refresh");
+        }
         const currentUser = await authService.getCurrentUser();
         setUser(currentUser);
       } catch {

@@ -38,6 +38,11 @@ class InvestigationType(str, Enum):
     METADATA = "metadata"
     REVERSE_IMAGE = "reverse_image"
     FILE = "file"
+    SOCIAL_MEDIA = "social_media"
+    BREACH = "breach"
+    THREAT_INTELLIGENCE = "threat_intelligence"
+    MALWARE = "malware"
+    RISK_ASSESSMENT = "risk_assessment"
 
 
 class InvestigationStatus(str, Enum):

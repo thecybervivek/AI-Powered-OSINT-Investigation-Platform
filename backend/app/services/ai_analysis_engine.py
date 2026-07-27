@@ -13,6 +13,7 @@ from backend.app.models.investigation import RiskLevel
 from backend.app.models.report import AIEngineUsed
 from backend.app.utils.http_client import request_with_retry
 from backend.app.utils.risk_scoring import clamp
+from backend.app.utils.privacy import redact_for_external_ai
 
 logger = logging.getLogger("app.services.ai_analysis_engine")
 
@@ -87,7 +88,7 @@ class AIAnalysisEngine:
 
         evidence_items = flatten_evidence(investigations)
 
-        if settings.OPENAI_API_KEY:
+        if settings.EXTERNAL_AI_PROCESSING_ENABLED and settings.OPENAI_API_KEY:
 
             try:
                 return await self._analyze_with_openai(investigations, evidence_items)
@@ -123,7 +124,10 @@ class AIAnalysisEngine:
                 "data": e["data"],
             }
             for e in evidence_items
-        ][:200]
+][:200]
+
+        if settings.AI_REDACT_SENSITIVE_DATA:
+            trimmed_evidence = redact_for_external_ai(trimmed_evidence)
 
         system_prompt = (
             "You are a senior cybersecurity threat analyst. You are given "
@@ -176,9 +180,7 @@ class AIAnalysisEngine:
             )
 
         if response.status_code != 200:
-            raise RuntimeError(
-                f"OpenAI returned HTTP {response.status_code}: {response.text[:300]}"
-            )
+            raise RuntimeError(f"External AI provider returned HTTP {response.status_code}.")
 
         completion = response.json()
         content = completion["choices"][0]["message"]["content"]

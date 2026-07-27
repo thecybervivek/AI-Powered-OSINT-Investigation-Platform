@@ -2,6 +2,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+from backend.app.core.config import settings
+
 SECURITY_HEADERS: dict[str, str] = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -10,31 +12,23 @@ SECURITY_HEADERS: dict[str, str] = {
     "X-XSS-Protection": "0",
     "Cross-Origin-Opener-Policy": "same-origin",
     "Cross-Origin-Resource-Policy": "same-origin",
+    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
 }
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """
-    Adds standard hardening headers to every response. HSTS is applied
-    only over HTTPS connections since it is meaningless (and occasionally
-    harmful during local dev) over plain HTTP.
-    """
-
-    async def dispatch(
-        self,
-        request: Request,
-        call_next,
-    ) -> Response:
-
+    async def dispatch(self, request: Request, call_next) -> Response:
         response = await call_next(request)
 
         for header, value in SECURITY_HEADERS.items():
             response.headers.setdefault(header, value)
 
-        if request.url.scheme == "https":
+        response.headers.setdefault("Cache-Control", "no-store")
+
+        if request.url.scheme == "https" and settings.ENABLE_HSTS:
             response.headers.setdefault(
                 "Strict-Transport-Security",
-                "max-age=63072000; includeSubDomains",
+                f"max-age={settings.HSTS_MAX_AGE_SECONDS}; includeSubDomains",
             )
 
         return response

@@ -63,7 +63,7 @@ async def analyze_ioc(
 
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"IOC analysis failed: {error}",
+            detail="IOC analysis failed",
         )
 
     return IOCAnalysisResponse(

@@ -48,7 +48,7 @@ async def investigate_username(
 
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Username investigation failed: {error}",
+            detail="Username investigation failed",
         )
 
     return investigation

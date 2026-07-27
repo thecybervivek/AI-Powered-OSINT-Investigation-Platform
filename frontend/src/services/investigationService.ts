@@ -23,11 +23,15 @@ export const investigationService = {
       "/investigations",
       { params }
     );
+
     return response.data;
   },
 
   async get(id: string): Promise<Investigation> {
-    const response = await apiClient.get<Investigation>(`/investigations/${id}`);
+    const response = await apiClient.get<Investigation>(
+      `/investigations/${id}`
+    );
+
     return response.data;
   },
 
@@ -40,6 +44,7 @@ export const investigationService = {
       "/investigations/username/investigate",
       { username }
     );
+
     return response.data;
   },
 
@@ -48,6 +53,7 @@ export const investigationService = {
       "/investigations/email/investigate",
       { email }
     );
+
     return response.data;
   },
 
@@ -56,6 +62,7 @@ export const investigationService = {
       "/investigations/domain/investigate",
       { target }
     );
+
     return response.data;
   },
 
@@ -64,6 +71,16 @@ export const investigationService = {
       "/investigations/ip/investigate",
       { target }
     );
+
+    return response.data;
+  },
+
+  async createDns(domain: string): Promise<Investigation> {
+    const response = await apiClient.post<Investigation>(
+      "/investigations/dns-intelligence/investigate",
+      { domain }
+    );
+
     return response.data;
   },
 
@@ -72,25 +89,112 @@ export const investigationService = {
       "/investigations/url/investigate",
       { url }
     );
+
     return response.data;
   },
 
-  async uploadFile(file: File): Promise<{ investigation: Investigation }> {
+  async createPhone(phoneNumber: string): Promise<Investigation> {
+    const response = await apiClient.post<Investigation>(
+      "/investigations/phone/investigate",
+      { phone_number: phoneNumber }
+    );
+
+    return response.data;
+  },
+
+  async createBreach(target: string): Promise<Investigation> {
+    const response = await apiClient.post<Investigation>(
+      "/investigations/breach/investigate",
+      { target }
+    );
+
+    return response.data;
+  },
+
+  async createThreatIntelligence(target: string): Promise<Investigation> {
+    const response = await apiClient.post<Investigation>(
+      "/investigations/threat-intelligence/investigate",
+      { target }
+    );
+
+    return response.data;
+  },
+
+  async createSocialMedia(username: string): Promise<Investigation> {
+    const response = await apiClient.post<Investigation>(
+      "/investigations/social-media/investigate",
+      {
+        username,
+        related_usernames: [],
+      }
+    );
+
+    return response.data;
+  },
+
+  async createMalware(fileHash: string): Promise<Investigation> {
+    const response = await apiClient.post<Investigation>(
+      "/investigations/malware/investigate",
+      { file_hash: fileHash }
+    );
+
+    return response.data;
+  },
+
+  async createRiskAssessment(
+    investigationIds: string[],
+    label?: string
+  ): Promise<Investigation> {
+    const response = await apiClient.post<Investigation>(
+      "/investigations/risk-assessment/investigate",
+      {
+        investigation_ids: investigationIds,
+        label: label || "Composite Risk Assessment",
+      }
+    );
+
+    return response.data;
+  },
+
+  async uploadFile(
+    file: File
+  ): Promise<{ investigation: Investigation }> {
     const formData = new FormData();
     formData.append("file", file);
 
-    const response = await apiClient.post("/investigations/file/upload", formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
+    const response = await apiClient.post(
+      "/investigations/file/upload",
+      formData
+    );
+
+    return response.data;
+  },
+
+  async uploadReverseImage(
+    file: File
+  ): Promise<{ investigation: Investigation }> {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const response = await apiClient.post(
+      "/investigations/reverse-image/upload",
+      formData
+    );
+
     return response.data;
   },
 
   async analyzeIoc(
     indicator: string
-  ): Promise<{ detected_type: InvestigationType; investigation: Investigation }> {
-    const response = await apiClient.post("/investigations/ioc/analyze", {
-      indicator,
-    });
+  ): Promise<{
+    detected_type: InvestigationType;
+    investigation: Investigation;
+  }> {
+    const response = await apiClient.post(
+      "/investigations/ioc/analyze",
+      { indicator }
+    );
+
     return response.data;
   },
 };

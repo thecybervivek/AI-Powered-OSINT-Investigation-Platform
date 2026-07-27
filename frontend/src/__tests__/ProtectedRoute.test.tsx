@@ -17,12 +17,11 @@ vi.mock("@/services/authService", () => ({
 vi.mock("@/services/apiClient", () => ({
   tokenStorage: {
     getAccessToken: vi.fn(() => null),
-    getRefreshToken: vi.fn(() => null),
     setTokens: vi.fn(),
     setAccessToken: vi.fn(),
     clear: vi.fn(),
   },
-  apiClient: {},
+  apiClient: { post: vi.fn().mockRejectedValue(new Error("no session")) },
 }));
 
 describe("ProtectedRoute", () => {

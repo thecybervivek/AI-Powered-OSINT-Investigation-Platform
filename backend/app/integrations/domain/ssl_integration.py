@@ -8,6 +8,7 @@ from backend.app.integrations.base import AsyncBaseIntegration
 from backend.app.integrations.base import IntegrationResult
 from backend.app.integrations.exceptions import IntegrationTimeoutError
 from backend.app.models.investigation import ModuleResultStatus
+from backend.app.utils.http_client import assert_public_url
 
 _CERT_DATE_FORMAT = "%b %d %H:%M:%S %Y %Z"
 
@@ -30,6 +31,15 @@ class SSLCertificateIntegration(AsyncBaseIntegration):
         host = target.strip().lower()
         # Strip a scheme/path if the caller passed a URL by mistake.
         host = host.split("://")[-1].split("/")[0].split(":")[0]
+
+        try:
+            assert_public_url(f"https://{host}")
+        except ValueError as error:
+            return IntegrationResult(
+                source=self.source_name,
+                status=ModuleResultStatus.FAILED,
+                error_message=f"Unsafe target refused: {error}",
+            )
 
         context = ssl.create_default_context()
 

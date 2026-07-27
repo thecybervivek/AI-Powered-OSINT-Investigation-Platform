@@ -2,6 +2,7 @@ import time
 from pathlib import Path
 
 from backend.app.core.config import settings
+from backend.app.core.paths import resolve_project_path
 from backend.app.integrations.base import IntegrationResult
 from backend.app.models.investigation import ModuleResultStatus
 
@@ -44,7 +45,7 @@ class YaraScanner:
             )
             return
 
-        rules_dir = Path(settings.YARA_RULES_DIR)
+        rules_dir = resolve_project_path(settings.YARA_RULES_DIR)
 
         if not rules_dir.is_dir():
             cls._compile_error = f"YARA rules directory not found: {rules_dir}"

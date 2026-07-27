@@ -4,6 +4,7 @@ from backend.app.core.config import settings
 from backend.app.integrations.base import AsyncBaseIntegration
 from backend.app.integrations.base import IntegrationResult
 from backend.app.models.investigation import ModuleResultStatus
+from backend.app.utils.http_client import assert_public_url
 from backend.app.utils.http_client import request_with_retry
 
 # Lightweight (header-substring -> technology) and (body-marker ->
@@ -60,6 +61,15 @@ class TechnologyDetectionIntegration(AsyncBaseIntegration):
 
         if "://" not in host:
             host = f"https://{host}"
+
+        try:
+            assert_public_url(host)
+        except ValueError as error:
+            return IntegrationResult(
+                source=self.source_name,
+                status=ModuleResultStatus.FAILED,
+                error_message=f"Unsafe target refused: {error}",
+            )
 
         detected: set[str] = set()
         headers_seen: dict[str, str] = {}

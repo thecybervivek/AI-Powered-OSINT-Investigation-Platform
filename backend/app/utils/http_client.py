@@ -2,7 +2,7 @@ import asyncio
 import ipaddress
 import logging
 import socket
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -11,82 +11,88 @@ from backend.app.integrations.exceptions import IntegrationTimeoutError
 
 logger = logging.getLogger("app.utils.http_client")
 
-
-# ==========================================================
-# SSRF Guard
-# ==========================================================
-
 _BLOCKED_HOSTNAMES = {
     "localhost",
+    "localhost.localdomain",
     "metadata.google.internal",
 }
 
+_MAX_REDIRECTS = 5
 
-def assert_public_url(url: str) -> None:
-    """
-    Defends every outbound OSINT call against SSRF: rejects targets that
-    resolve to loopback, link-local, private, or multicast address space,
-    and rejects the cloud metadata hostname outright. Raises ValueError
-    on anything unsafe; callers should treat that as a failed lookup
-    rather than let the request through.
-    """
 
-    parsed = urlparse(url)
+def resolve_public_addresses(
+    hostname: str,
+) -> tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, ...]:
+    host = hostname.rstrip(".").lower()
 
-    if parsed.scheme not in ("http", "https"):
-        raise ValueError(f"Unsupported URL scheme: {parsed.scheme}")
-
-    hostname = parsed.hostname
-
-    if not hostname:
-        raise ValueError("URL has no hostname.")
-
-    if hostname.lower() in _BLOCKED_HOSTNAMES:
-        raise ValueError(f"Blocked hostname: {hostname}")
+    if host in _BLOCKED_HOSTNAMES or host.endswith(".localhost"):
+        raise ValueError("Blocked destination hostname.")
 
     try:
-        # If the hostname is already a literal IP this succeeds directly;
-        # otherwise resolve it so we validate the address actually used.
         try:
-            addr = ipaddress.ip_address(hostname)
-            candidates = [addr]
+            candidates = [ipaddress.ip_address(host)]
 
         except ValueError:
-            infos = socket.getaddrinfo(hostname, None)
-            candidates = [ipaddress.ip_address(info[4][0]) for info in infos]
+            infos = socket.getaddrinfo(
+                host,
+                None,
+                type=socket.SOCK_STREAM,
+            )
+
+            candidates = list(
+                {
+                    ipaddress.ip_address(info[4][0])
+                    for info in infos
+                }
+            )
 
     except socket.gaierror as error:
-        raise ValueError(f"Could not resolve hostname: {hostname}") from error
+        raise ValueError(
+            "Destination hostname could not be resolved."
+        ) from error
+
+    if not candidates:
+        raise ValueError(
+            "Destination hostname resolved to no addresses."
+        )
 
     for addr in candidates:
-
         if (
-            addr.is_loopback
+            not addr.is_global
+            or addr.is_private
+            or addr.is_loopback
             or addr.is_link_local
             or addr.is_multicast
             or addr.is_reserved
             or addr.is_unspecified
-            or (addr.is_private and not _allow_private_target())
         ):
             raise ValueError(
-                f"URL resolves to a non-public address ({addr}); refusing to fetch."
+                "Destination resolves to a non-public address."
             )
 
-
-def _allow_private_target() -> bool:
-    """
-    Investigation targets are sometimes internal-network IPs/domains the
-    analyst legitimately owns (e.g. auditing their own infrastructure).
-    Kept as a single override point rather than silently allowing private
-    ranges everywhere. Defaults to disallow.
-    """
-
-    return False
+    return tuple(candidates)
 
 
-# ==========================================================
-# Retrying Async Request
-# ==========================================================
+def assert_public_url(url: str) -> None:
+    parsed = urlparse(url)
+
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError(
+            "Only HTTP(S) destinations are permitted."
+        )
+
+    if parsed.username or parsed.password:
+        raise ValueError(
+            "User-info in outbound URLs is not permitted."
+        )
+
+    if not parsed.hostname:
+        raise ValueError(
+            "URL has no hostname."
+        )
+
+    resolve_public_addresses(parsed.hostname)
+
 
 async def request_with_retry(
     client: httpx.AsyncClient,
@@ -95,16 +101,28 @@ async def request_with_retry(
     *,
     max_retries: int | None = None,
     backoff_seconds: float | None = None,
+    enforce_public_destination: bool = True,
     **kwargs,
 ) -> httpx.Response:
     """
-    Issues a single outbound request with bounded retries on transient
-    network failures (timeouts, connection resets). Does NOT retry on
-    4xx/5xx HTTP responses — those are returned as-is for the caller to
-    interpret (a 404 is meaningful data for OSINT checks, not a failure).
+    Central outbound HTTP policy.
+
+    Every outbound destination and redirect hop is validated before
+    the request is sent.
+
+    DNS is checked immediately before each request. httpx still performs
+    its own DNS resolution, so application-layer validation cannot fully
+    eliminate DNS rebinding. Production egress filtering/firewall rules
+    must independently block private, loopback, link-local, multicast,
+    reserved, unspecified, and metadata networks.
     """
 
-    retries = settings.OSINT_MAX_RETRIES if max_retries is None else max_retries
+    retries = (
+        settings.OSINT_MAX_RETRIES
+        if max_retries is None
+        else max_retries
+    )
+
     backoff = (
         settings.OSINT_RETRY_BACKOFF_SECONDS
         if backoff_seconds is None
@@ -112,34 +130,107 @@ async def request_with_retry(
     )
 
     headers = kwargs.pop("headers", {}) or {}
-    headers.setdefault("User-Agent", settings.OSINT_HTTP_USER_AGENT)
+    headers.setdefault(
+        "User-Agent",
+        settings.OSINT_HTTP_USER_AGENT,
+    )
+
+    # Redirects are handled manually so every destination can be
+    # validated before following it.
+    kwargs.pop("follow_redirects", None)
 
     last_error: Exception | None = None
 
     for attempt in range(retries + 1):
+        current_url = url
+        current_method = method
 
         try:
-            return await client.request(
-                method,
-                url,
-                headers=headers,
-                **kwargs,
+            for _ in range(_MAX_REDIRECTS + 1):
+
+                if enforce_public_destination:
+                    assert_public_url(current_url)
+
+                response = await client.request(
+                    current_method,
+                    current_url,
+                    headers=headers,
+                    follow_redirects=False,
+                    **kwargs,
+                )
+
+                if response.status_code not in {
+                    301,
+                    302,
+                    303,
+                    307,
+                    308,
+                }:
+                    return response
+
+                location = response.headers.get("location")
+
+                if not location:
+                    return response
+
+                current_url = urljoin(
+                    str(response.url),
+                    location,
+                )
+
+                # RFC semantics:
+                # 303 redirects become GET.
+                # Common 301/302 POST redirects also become GET.
+                if (
+                    response.status_code == 303
+                    or (
+                        response.status_code in {301, 302}
+                        and current_method.upper() == "POST"
+                    )
+                ):
+                    current_method = "GET"
+
+                    kwargs.pop("json", None)
+                    kwargs.pop("data", None)
+                    kwargs.pop("content", None)
+
+            raise httpx.TooManyRedirects(
+                "Too many redirects"
             )
 
-        except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout):
+        except ValueError:
+            # Security-policy violations must not be retried.
+            raise
+
+        except (
+            httpx.ConnectTimeout,
+            httpx.ReadTimeout,
+            httpx.WriteTimeout,
+        ):
             last_error = IntegrationTimeoutError(
-                f"Request to {url} timed out after {attempt + 1} attempt(s)."
+                "Outbound request timed out after "
+                f"{attempt + 1} attempt(s)."
             )
 
-        except (httpx.ConnectError, httpx.RemoteProtocolError) as error:
+        except (
+            httpx.ConnectError,
+            httpx.RemoteProtocolError,
+            httpx.TooManyRedirects,
+        ) as error:
             last_error = error
 
         if attempt < retries:
-            await asyncio.sleep(backoff * (attempt + 1))
+            await asyncio.sleep(
+                backoff * (attempt + 1)
+            )
 
-    if isinstance(last_error, IntegrationTimeoutError):
+    if isinstance(
+        last_error,
+        IntegrationTimeoutError,
+    ):
         raise last_error
 
     raise IntegrationTimeoutError(
-        f"Request to {url} failed after {retries + 1} attempt(s): {last_error}"
+        "Outbound request failed after "
+        f"{retries + 1} attempt(s)."
     )

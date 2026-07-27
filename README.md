@@ -1,372 +1,71 @@
-# 🕵️ AI-Powered OSINT Investigation Platform
+# AI-Powered OSINT Investigation Platform
 
-![Python](https://img.shields.io/badge/Python-3.13-blue?style=for-the-badge&logo=python)
-![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?style=for-the-badge&logo=fastapi)
-![React](https://img.shields.io/badge/React-Frontend-61DAFB?style=for-the-badge&logo=react)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Database-336791?style=for-the-badge&logo=postgresql)
-![Docker](https://img.shields.io/badge/Docker-Container-2496ED?style=for-the-badge&logo=docker)
-![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
-![Status](https://img.shields.io/badge/Status-In%20Development-orange?style=for-the-badge)
-![Backend](https://img.shields.io/badge/Backend-Milestone%206%20Completed-success?style=for-the-badge)
+Production-oriented OSINT investigation platform with a FastAPI backend and React/TypeScript analyst dashboard. The platform consolidates multiple intelligence modules into authenticated investigations, correlates evidence, scores risk, and generates analyst reports including PDF export.
 
-> **A production-grade AI-powered Open Source Intelligence (OSINT) Investigation Platform** built with FastAPI, React, PostgreSQL, Docker, and AI integrations. The platform enables investigators, SOC analysts, penetration testers, threat intelligence teams, and cybersecurity professionals to collect, analyze, correlate, and generate intelligence reports from multiple OSINT sources through a modern web interface.
+## Implemented capabilities
 
----
+- Authentication and protected investigation history
+- Username, email, domain, IP, DNS, URL and IOC intelligence
+- File intelligence with validation, hashing, YARA and external reputation integrations
+- Phone, reverse-image, social-media, breach, threat and malware intelligence
+- Composite cross-investigation risk assessment
+- AI/local-deterministic report generation, MITRE ATT&CK mapping and PDF export
+- React/TypeScript dashboard for investigations and reports
+- Alembic migrations, CI, Docker deployment, health/readiness endpoints and release quality gates
 
-# 🎯 Project Objective
+## Quick start
 
-Build an enterprise-grade AI-powered OSINT Investigation Platform capable of collecting intelligence from multiple public sources while providing automated AI-assisted analysis, investigation history, risk assessment, and professional investigation reports.
+### Backend
 
-The platform focuses on:
-
-- Collecting publicly available intelligence
-- Automating investigations
-- AI-assisted intelligence analysis
-- Evidence correlation
-- Professional report generation
-- Investigation history management
-- Supporting cybersecurity professionals during investigations
-
----
-
-# ✨ Features
-
-## 🔍 Intelligence Collection
-
-### ✅ Implemented
-
-- Username Investigation
-- Email Intelligence
-- Domain Intelligence
-- WHOIS Lookup
-- DNS Enumeration
-- IP Intelligence
-- IP Reputation Analysis
-- Geolocation Lookup
-- URL Reputation Analysis
-- IOC Classification
-- File Intelligence
-- File Metadata Extraction
-- File Hashing (MD5, SHA1, SHA256)
-- Investigation Timeline
-
-### 🚧 Planned
-
-- Phone Number Intelligence
-- Reverse Image Search
-- Social Media Enumeration
-- Breach Intelligence
-- Dark Web Intelligence
-- Malware Intelligence
-- Threat Feed Aggregation
-
----
-
-## 🤖 AI Features
-
-### 🚧 Planned
-
-- AI Investigation Summary
-- AI Threat Analysis
-- AI Risk Assessment
-- AI Evidence Correlation
-- AI Report Generation
-- AI Recommendations
-
----
-
-## 📊 Dashboard *(Upcoming React Frontend)*
-
-- Investigation Dashboard
-- Investigation History
-- Saved Reports
-- User Dashboard
-- Analytics
-- Investigation Timeline
-- Search History
-- Recent Investigations
-
----
-
-## 🔐 Security
-
-### ✅ Implemented
-
-- JWT Authentication
-- Refresh Tokens
-- Password Hashing (bcrypt)
-- Protected APIs
-- API Rate Limiting
-- Input Validation
-- Secure File Validation
-
-### 🚧 Planned
-
-- Role Based Access Control (RBAC)
-- Email Verification
-- Password Reset
-- Audit Logs
-- MFA Authentication
-
----
-
-# 🛠️ Technology Stack
-
-| Category | Technology |
-|------------|----------------|
-| Backend | FastAPI |
-| Frontend | React |
-| Database | PostgreSQL |
-| Development Database | SQLite |
-| ORM | SQLAlchemy |
-| Database Migration | Alembic |
-| Authentication | JWT |
-| Password Security | bcrypt |
-| API Documentation | Swagger UI |
-| AI | OpenAI API *(Planned)* |
-| Containerization | Docker |
-| Version Control | Git + GitHub |
-
----
-
-# 📂 Project Structure
-
-```text
-AI-Powered-OSINT-Investigation-Platform/
-
-backend/
-│
-├── app/
-│   ├── api/
-│   ├── core/
-│   ├── db/
-│   ├── integrations/
-│   ├── models/
-│   ├── repositories/
-│   ├── schemas/
-│   ├── services/
-│   ├── utils/
-│   └── main.py
-│
-├── alembic/
-├── tests/
-├── requirements.txt
-└── README.md
-```
-
----
-
-# 🚀 Current Development Roadmap
-
-## ✅ Completed
-
-### Project Foundation
-
-- [x] Project Structure
-- [x] FastAPI Backend Setup
-- [x] SQLAlchemy Integration
-- [x] Alembic Database Migration
-- [x] PostgreSQL Support
-- [x] SQLite Development Database
-- [x] Git Version Control
-- [x] GitHub Repository Setup
-
-### Authentication
-
-- [x] JWT Authentication
-- [x] User Registration
-- [x] User Login
-- [x] Refresh Token
-- [x] Protected Routes
-- [x] Current User API
-- [x] Logout API
-- [x] Password Hashing
-
-### OSINT Modules
-
-- [x] Username Investigation
-- [x] Email Intelligence
-- [x] Domain Intelligence
-- [x] WHOIS Lookup
-- [x] DNS Enumeration
-- [x] IP Intelligence
-- [x] IP Reputation
-- [x] URL Reputation Analysis
-- [x] IOC Analysis
-- [x] File Intelligence
-- [x] Metadata Extraction
-- [x] File Hashing
-- [x] Investigation Timeline
-
-### Security
-
-- [x] API Rate Limiting
-- [x] File Validation
-- [x] Secure Upload Handling
-
----
-
-## 🚧 Currently Working On
-
-- [ ] Milestone 6 Part 2
-- [ ] Advanced File Analysis
-- [ ] AI Integration Preparation
-
----
-
-## 📌 Upcoming Features
-
-### AI Intelligence
-
-- [ ] AI Report Generator
-- [ ] AI Threat Analysis
-- [ ] AI Evidence Correlation
-- [ ] AI Risk Assessment
-- [ ] AI Recommendations
-
-### Intelligence Modules
-
-- [ ] Phone Number Intelligence
-- [ ] Reverse Image Search
-- [ ] Social Media Enumeration
-- [ ] Breach Intelligence
-- [ ] Threat Intelligence
-- [ ] Malware Intelligence
-
-### Dashboard
-
-- [ ] React Frontend
-- [ ] Investigation Dashboard
-- [ ] Saved Reports
-- [ ] Search History
-- [ ] Analytics
-- [ ] Timeline Visualization
-
-### Export
-
-- [ ] PDF Reports
-- [ ] CSV Export
-- [ ] JSON Export
-- [ ] DOCX Export
-
-### Deployment
-
-- [ ] Docker
-- [ ] Docker Compose
-- [ ] Nginx
-- [ ] CI/CD Pipeline
-- [ ] Cloud Deployment
-
----
-
-# 🚀 Installation
+Create a Python 3.12 virtual environment, install `requirements.txt`, copy `.env.example` to `.env` and set local values, then run:
 
 ```bash
-git clone https://github.com/vivek-sh45/AI-Powered-OSINT-Investigation-Platform.git
-
-cd AI-Powered-OSINT-Investigation-Platform
-
-python -m venv .venv
-
-source .venv/bin/activate
-# Windows:
-# .venv\Scripts\activate
-
-pip install -r requirements.txt
-
 alembic upgrade head
-
 uvicorn backend.app.main:app --reload
 ```
 
----
+API documentation is available at `/docs` when documentation is enabled for the selected environment.
 
-# 📚 API Documentation
+### Frontend
 
-After starting the server:
-
-**Swagger UI**
-
-```
-http://127.0.0.1:8000/docs
+```bash
+cd frontend
+npm ci
+npm run dev
 ```
 
-**ReDoc**
+The Vite development server defaults to port 5173. Configure its API base URL as required by your environment.
 
+## Validation
+
+Backend gate:
+
+```bash
+python scripts/quality_gate.py
 ```
-http://127.0.0.1:8000/redoc
+
+Backend + frontend gate:
+
+```bash
+python scripts/quality_gate.py --frontend
 ```
 
----
+For a release candidate, also validate a clean Alembic upgrade, Docker build, `/health`, `/ready`, authentication, an investigation flow, report generation and authenticated PDF download. See `RELEASE_CHECKLIST.md`.
 
-# 📈 Project Status
+## Deployment
 
-| Phase | Status |
-|----------|------------|
-| Backend Setup | ✅ Completed |
-| Authentication | ✅ Completed |
-| Database Migration | ✅ Completed |
-| PostgreSQL Integration | ✅ Completed |
-| Core OSINT Modules | ✅ Completed |
-| File Intelligence | ✅ Completed |
-| API Documentation | ✅ Completed |
-| AI Integration | 🚧 Planned |
-| React Frontend | 🚧 Planned |
-| Deployment | ⏳ Planned |
+`Dockerfile` and `docker-compose.yml` provide the deployment baseline. Never ship `.env`, local databases, virtual environments, dependency folders, caches, generated storage, or frontend build output as source artifacts.
 
----
+See `PRODUCTION.md`, `SECURITY.md`, `OBSERVABILITY.md`, `QUALITY.md`, and `RELEASE.md` for operational guidance.
 
-# 🎯 Target Users
+## Release status
 
-- SOC Analysts
-- Cybersecurity Analysts
-- Threat Intelligence Analysts
-- Digital Forensics Investigators
-- Penetration Testers
-- Incident Responders
-- Bug Bounty Hunters
-- Security Researchers
-- Blue Team Professionals
+This source package represents the M13 release-candidate baseline. Static/source validation performed during packaging does not replace runtime tests in a fully provisioned environment. CI is the authoritative clean-environment gate before production release.
 
----
+### Authentication and privacy notes (1.0.0-rc.2)
 
-# 📸 Screenshots
+Refresh credentials are server-tracked, rotated, and delivered only in an HttpOnly cookie. JavaScript stores only the short-lived access token. Production requires HTTPS (`REFRESH_COOKIE_SECURE=true`). The refresh cookie uses SameSite protection and is scoped to `/api/v1`; deployments that intentionally use cross-site frontend/API origins must add a CSRF-token design before selecting `SameSite=None`.
 
-*(Screenshots will be added as development progresses.)*
+External AI report processing is disabled by default (`EXTERNAL_AI_PROCESSING_ENABLED=false`). Local deterministic reporting remains available. When external AI is explicitly enabled, the platform applies payload minimization/redaction; operators remain responsible for provider contracts, retention policy, and applicable privacy law.
 
----
-
-# 🤝 Contributing
-
-Contributions, feature requests, and suggestions are welcome.
-
-If you'd like to contribute:
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Submit a Pull Request
-
----
-
-# 📄 License
-
-This project is licensed under the **MIT License**.
-
----
-
-# 👤 Author
-
-**Vivek Sharma**
-
-**Cybersecurity Analyst | SOC | OSINT | Network Security | Threat Intelligence**
-
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-vivek--sharma--cybersec-0077B5?style=flat&logo=linkedin)](https://linkedin.com/in/vivek-sharma-cybersec)
-
-[![GitHub](https://img.shields.io/badge/GitHub-vivek--sh45-181717?style=flat&logo=github)](https://github.com/vivek-sh45)
-
-[![Email](https://img.shields.io/badge/Email-thecybervivek@gmail.com-D14836?style=flat&logo=gmail)](mailto:thecybervivek@gmail.com)
-
----
-
-⭐ **If you find this project useful, consider giving it a star on GitHub!**
+Application storage and bundled YARA rule paths are resolved from the project root rather than the process working directory. In production, enforce request-body limits at the reverse proxy in addition to application streaming limits.

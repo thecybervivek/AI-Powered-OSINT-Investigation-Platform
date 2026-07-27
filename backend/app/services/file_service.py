@@ -9,6 +9,7 @@ from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import settings
+from backend.app.core.paths import resolve_project_path
 from backend.app.integrations.base import IntegrationResult
 from backend.app.integrations.file.hybrid_analysis_integration import HybridAnalysisIntegration
 from backend.app.integrations.file.malwarebazaar_integration import MalwareBazaarIntegration
@@ -75,19 +76,41 @@ class FileIntelligenceService:
             )
         )
 
-        storage_dir = Path(settings.FILE_STORAGE_DIR)
+        storage_dir = resolve_project_path(settings.FILE_STORAGE_DIR)
         storage_dir.mkdir(parents=True, exist_ok=True)
 
         original_filename = sanitize_filename(upload.filename or "upload")
         stored_filename = f"{uuid.uuid4().hex}_{original_filename}"
         stored_path = storage_dir / stored_filename
 
-        contents = await upload.read()
-
-        with open(stored_path, "wb") as handle:
-            handle.write(contents)
-
-        file_size_bytes = len(contents)
+        max_bytes = settings.FILE_UPLOAD_MAX_SIZE_MB * 1024 * 1024
+        chunk_size = min(settings.FILE_HASH_CHUNK_SIZE_BYTES, 1024 * 1024)
+        file_size_bytes = 0
+        try:
+            with open(stored_path, "xb") as handle:
+                try:
+                    os.chmod(stored_path, 0o600)
+                except OSError:
+                    pass
+                while True:
+                    chunk = await upload.read(chunk_size)
+                    if not chunk:
+                        break
+                    file_size_bytes += len(chunk)
+                    if file_size_bytes > max_bytes:
+                        raise ValueError(
+                            f"File exceeds maximum upload size of {settings.FILE_UPLOAD_MAX_SIZE_MB} MB."
+                        )
+                    handle.write(chunk)
+        except Exception as error:
+            try:
+                stored_path.unlink(missing_ok=True)
+            finally:
+                self.investigations.update(
+                    investigation, status=InvestigationStatus.FAILED,
+                    error_message=str(error), completed_at=datetime.now(timezone.utc),
+                )
+            raise
 
         validation = validate_upload(
             filename=original_filename,
@@ -118,7 +141,7 @@ class FileIntelligenceService:
 
         if not validation.is_valid:
 
-            os.remove(stored_path)
+            stored_path.unlink(missing_ok=True)
 
             investigation = self.investigations.update(
                 investigation,

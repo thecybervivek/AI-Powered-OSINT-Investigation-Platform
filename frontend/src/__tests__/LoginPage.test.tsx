@@ -50,7 +50,6 @@ describe("LoginPage", () => {
 
     vi.mocked(authService.login).mockResolvedValue({
       access_token: "fake-access",
-      refresh_token: "fake-refresh",
       token_type: "bearer",
     });
     vi.mocked(authService.getCurrentUser).mockResolvedValue({

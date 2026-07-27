@@ -505,3 +505,9 @@ def test_get_and_delete_investigation(client, auth_headers, test_user, db_sessio
         headers=auth_headers,
     )
     assert get_after_delete.status_code == 404
+
+def test_urlscan_malicious_contract_maps_as_indicator():
+    from backend.app.services.mitre_mapping import map_mitre_attack
+    mapped = map_mitre_attack([{"investigation_type":"url","source":"urlscan","status":"success","data":{"malicious":True}}])
+    hit = next(item for item in mapped if item["technique_id"] == "INDICATOR-URL-REPUTATION")
+    assert hit["classification"] == "indicator_only"

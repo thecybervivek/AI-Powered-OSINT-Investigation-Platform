@@ -1,6 +1,7 @@
 from functools import lru_cache
 
 from pydantic import Field
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,8 +15,8 @@ class Settings(BaseSettings):
 
     # Application
     APP_NAME: str = "AI Powered OSINT Investigation Platform"
-    APP_VERSION: str = "1.0.0"
-    APP_DESCRIPTION: str = "Production Ready AI Powered OSINT Investigation Platform"
+    APP_VERSION: str = "1.0.0-rc.2"
+    APP_DESCRIPTION: str = "AI Powered OSINT Investigation Platform release candidate"
 
     DEBUG: bool = True
     ENVIRONMENT: str = "development"
@@ -23,15 +24,27 @@ class Settings(BaseSettings):
     HOST: str = "127.0.0.1"
     PORT: int = 8000
 
+    # Production hardening (Milestone 10)
+    TRUSTED_HOSTS: list[str] = ["localhost", "127.0.0.1"]
+    ENABLE_API_DOCS: bool = True
+    ENABLE_HSTS: bool = True
+    HSTS_MAX_AGE_SECONDS: int = 63072000
+
     # Security
     SECRET_KEY: str = Field(
         default="CHANGE_ME_BEFORE_PRODUCTION"
     )
 
     JWT_ALGORITHM: str = "HS256"
+    JWT_ISSUER: str = "ai-osint-platform"
+    JWT_AUDIENCE: str = "ai-osint-api"
 
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    REFRESH_COOKIE_NAME: str = "osint_refresh"
+    REFRESH_COOKIE_SECURE: bool = False
+    REFRESH_COOKIE_SAMESITE: str = "lax"
+    REFRESH_COOKIE_PATH: str = "/api/v1"
 
     # Database
     DATABASE_URL: str = "sqlite:///./osint.db"
@@ -108,7 +121,8 @@ class Settings(BaseSettings):
     # the integration still runs, just without the higher API tier.
     URLSCAN_API_KEY: str = ""
     URLSCAN_BASE_URL: str = "https://urlscan.io/api/v1"
-    URLSCAN_VISIBILITY: str = "public"
+    URLSCAN_VISIBILITY: str = "private"
+    URLSCAN_ACTIVE_SCANNING_ENABLED: bool = False
     URLSCAN_POLL_TIMEOUT_SECONDS: float = 20.0
     URLSCAN_POLL_INTERVAL_SECONDS: float = 2.0
 
@@ -125,6 +139,9 @@ class Settings(BaseSettings):
     RATE_LIMIT_BACKEND: str = "memory"
     RATE_LIMIT_DEFAULT: str = "60/minute"
     RATE_LIMIT_INVESTIGATION: str = "10/minute"
+    RATE_LIMIT_LOGIN: str = "5/minute"
+    RATE_LIMIT_REGISTER: str = "3/minute"
+    RATE_LIMIT_REFRESH: str = "10/minute"
 
     # ------------------------------------------------------
     # Milestone 6 - File Intelligence
@@ -166,8 +183,104 @@ class Settings(BaseSettings):
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"
     OPENAI_MODEL: str = "gpt-4o-mini"
     OPENAI_REQUEST_TIMEOUT_SECONDS: float = 30.0
+    EXTERNAL_AI_PROCESSING_ENABLED: bool = False
+    AI_REDACT_SENSITIVE_DATA: bool = True
 
     REPORT_PDF_STORAGE_DIR: str = "storage/reports"
+
+
+    # ------------------------------------------------------
+    # Milestone 9 Part 1 - Phone Intelligence
+    # ------------------------------------------------------
+    # PhoneValidationIntegration needs no settings at all (fully offline,
+    # bundled libphonenumber data). NumVerify is the one optional,
+    # network-backed cross-verification source in this module.
+    NUMVERIFY_API_KEY: str = ""
+    NUMVERIFY_BASE_URL: str = "http://apilayer.net/api/validate"
+
+    # ------------------------------------------------------
+    # Milestone 9 Part 2 - Reverse Image Intelligence
+    # ------------------------------------------------------
+    # Reuses FILE_UPLOAD_MAX_SIZE_MB / FILE_BLOCKED_EXTENSIONS above for
+    # size/extension validation (same validate_upload() call as File
+    # Intelligence) - only the storage location is dedicated, so images
+    # analyzed for reverse-image lookups stay organized separately from
+    # generic file uploads on disk.
+    IMAGE_STORAGE_DIR: str = "storage/images"
+
+    # ------------------------------------------------------
+    # Milestone 9 Part 4 - Breach Intelligence
+    # ------------------------------------------------------
+    # HIBP_API_KEY/HIBP_BASE_URL above (Milestone 3) are reused as-is for
+    # the per-email breach lookup here - not duplicated. DeHashed is the
+    # new, optional second source, adding domain-wide exposure search
+    # (which HIBP's public API tier doesn't offer) and plaintext/hashed
+    # password visibility where DeHashed's dataset has it. Local
+    # fallback (no key required at all) reuses the already-integrated
+    # EmailRepIntegration's own breach/credential-leak flags.
+    DEHASHED_EMAIL: str = ""
+    DEHASHED_API_KEY: str = ""
+    DEHASHED_BASE_URL: str = "https://api.dehashed.com"
+
+    # ------------------------------------------------------
+    # Milestone 9 Part 5 - Threat Intelligence
+    # ------------------------------------------------------
+    # All five providers are optional and independently key-gated -
+    # each reports status=skipped on its own when unconfigured, so any
+    # subset (including none) still leaves the module functional.
+
+    # Shodan - internet-wide host scan data: open ports, banners,
+    # detected services, org/ASN, hostnames.
+    SHODAN_API_KEY: str = ""
+    SHODAN_BASE_URL: str = "https://api.shodan.io"
+
+    # Censys - internet-wide host scan data (v2 API, HTTP Basic Auth
+    # with an API ID + Secret rather than a single key).
+    CENSYS_API_ID: str = ""
+    CENSYS_API_SECRET: str = ""
+    CENSYS_BASE_URL: str = "https://search.censys.io/api/v2"
+
+    # GreyNoise Community API - classifies whether an IP is mass
+    # internet background-noise scanning activity vs targeted, and
+    # flags common legitimate business services (RIOT).
+    GREYNOISE_API_KEY: str = ""
+    GREYNOISE_BASE_URL: str = "https://api.greynoise.io/v3/community"
+
+    # AlienVault OTX - community threat-pulse reputation (how many
+    # threat-intel "pulses" reference this indicator, and from whom).
+    OTX_API_KEY: str = ""
+    OTX_BASE_URL: str = "https://otx.alienvault.com/api/v1"
+
+    # SecurityTrails - historical/passive DNS intelligence: past IP
+    # resolutions for a domain, complementing Milestone 4's live-only
+    # DNS lookups with a historical view.
+    SECURITYTRAILS_API_KEY: str = ""
+    SECURITYTRAILS_BASE_URL: str = "https://api.securitytrails.com/v1"
+
+    # ------------------------------------------------------
+    # Milestone 9 Part 6 - DNS Intelligence
+    # ------------------------------------------------------
+    # Certificate Transparency search (crt.sh) is a free public service
+    # requiring no API key - it powers subdomain enumeration here.
+    CRT_SH_BASE_URL: str = "https://crt.sh"
+    CRT_SH_TIMEOUT_SECONDS: float = 15.0
+
+
+    @model_validator(mode="after")
+    def validate_production_security(self):
+        """Fail fast when an unsafe development configuration reaches production."""
+        if self.ENVIRONMENT.lower() == "production":
+            if self.SECRET_KEY == "CHANGE_ME_BEFORE_PRODUCTION" or len(self.SECRET_KEY) < 32:
+                raise ValueError("Production SECRET_KEY must be changed and contain at least 32 characters.")
+            if self.DEBUG:
+                raise ValueError("DEBUG must be false in production.")
+            if "*" in self.ALLOWED_ORIGINS:
+                raise ValueError("Wildcard CORS origins are not allowed in production.")
+            if not self.REFRESH_COOKIE_SECURE:
+                raise ValueError("REFRESH_COOKIE_SECURE must be true in production.")
+            if self.RATE_LIMIT_BACKEND == "memory":
+                raise ValueError("Production rate limiting must use a shared backend such as Redis.")
+        return self
 
 
 @lru_cache
