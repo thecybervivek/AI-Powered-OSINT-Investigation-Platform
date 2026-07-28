@@ -1,8 +1,78 @@
 import logging
+from datetime import date
 from datetime import datetime
 from typing import Any
 
 logger = logging.getLogger("app.utils.metadata_extraction")
+
+
+# ==========================================================
+# JSON-safety
+# ==========================================================
+#
+# Root cause of the Reverse Image 502: this dict is persisted straight
+# into a plain SQLAlchemy `JSON` column (InvestigationResult.data and
+# ImageFingerprint.extracted_metadata), which serializes with the
+# stdlib `json` module. Real-world camera/phone EXIF routinely contains
+# types `json.dumps` cannot handle on its own - most commonly
+# `PIL.TiffImagePlugin.IFDRational` (ExposureTime, FNumber, FocalLength,
+# and GPSLatitude/GPSLongitude/GPSAltitude are all rationals) and raw
+# `bytes` for a handful of GPS sub-tags (e.g. GPSAltitudeRef,
+# GPSProcessingMethod). The unit tests only ever exercised
+# PIL-generated PNGs with zero EXIF, so this never surfaced there - it
+# only appears once a real photograph is uploaded, which matches the
+# reported "worked, then flipped to 502" behavior. `db.commit()` then
+# raises a `TypeError` from deep inside the SQLAlchemy/sqlite3 JSON
+# encoder, which the endpoint's blanket `except Exception` turns into
+# an opaque 502.
+#
+# `_json_safe` recursively coerces a value into something `json.dumps`
+# is guaranteed to accept, so metadata extraction can never again take
+# down persistence for a valid image just because of an unusual tag
+# type.
+
+
+def _json_safe(value: Any) -> Any:
+
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+
+    if isinstance(value, bytes):
+
+        try:
+            return value.decode("utf-8", errors="replace")
+        except Exception:
+            return repr(value)
+
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+
+    if isinstance(value, dict):
+        return {str(_json_safe(k)): _json_safe(v) for k, v in value.items()}
+
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+
+    # Covers PIL's IFDRational and any other numerator/denominator-style
+    # rational (e.g. fractions.Fraction): render as a plain float rather
+    # than failing to serialize or silently dropping precision info.
+    if hasattr(value, "numerator") and hasattr(value, "denominator"):
+
+        try:
+            return float(value)
+        except Exception:
+            return str(value)
+
+    try:
+        float(value)
+        return float(value)
+    except (TypeError, ValueError):
+        pass
+
+    # Last resort: never let an unrecognized EXIF/metadata value type
+    # crash the investigation. A readable string beats a lost record.
+    return str(value)
+
 
 
 # ==========================================================
@@ -247,7 +317,14 @@ def extract_metadata(
     metadata = handler(path)
     metadata["supported"] = True
 
-    return metadata
+    # Every extractor above pulls values straight from third-party
+    # libraries (Pillow EXIF, pypdf info dict, python-docx/pptx core
+    # properties, openpyxl properties) whose types aren't guaranteed to
+    # be JSON-serializable. Sanitize once here, in the single place all
+    # callers (ReverseImageIntelligenceService, File Intelligence, etc.)
+    # go through, rather than trusting every extractor to do it
+    # individually.
+    return _json_safe(metadata)
 
 
 def _stringify(value: Any) -> str | None:

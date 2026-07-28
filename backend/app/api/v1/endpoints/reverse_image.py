@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import File
@@ -17,6 +19,9 @@ from backend.app.repositories.image_fingerprint_repository import ImageFingerpri
 from backend.app.repositories.investigation_repository import InvestigationRepository
 from backend.app.schemas.reverse_image import ReverseImageInvestigationResponse
 from backend.app.services.reverse_image_service import ReverseImageIntelligenceService
+
+
+logger = logging.getLogger("app.api.reverse_image")
 
 router = APIRouter()
 
@@ -43,6 +48,13 @@ async def upload_image(
     extracts EXIF/GPS metadata, and checks it against every image this
     same user has previously investigated for exact or near-duplicate
     matches - then persists everything as a Reverse Image investigation.
+
+    Expected validation failures are returned as client errors.
+    Unexpected failures are logged server-side with the complete
+    traceback (mirrors the File Intelligence pattern in
+    `endpoints/file.py`) while the API returns a sanitized error
+    response, rather than a generic, unlogged 502 that hides the real
+    cause.
     """
 
     service = ReverseImageIntelligenceService(db)
@@ -53,12 +65,34 @@ async def upload_image(
             upload=file,
         )
 
-    except Exception as error:
+    except ValueError as error:
+        logger.warning(
+            "Reverse image investigation rejected for user_id=%s filename=%r: %s",
+            current_user.id,
+            file.filename,
+            error,
+        )
 
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Reverse image investigation failed",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
+
+    except HTTPException:
+        raise
+
+    except Exception as error:
+        logger.exception(
+            "Unexpected reverse image investigation failure for "
+            "user_id=%s filename=%r",
+            current_user.id,
+            file.filename,
         )
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Reverse image investigation failed due to an internal server error.",
+        ) from error
 
     return ReverseImageInvestigationResponse(
         investigation=investigation,
