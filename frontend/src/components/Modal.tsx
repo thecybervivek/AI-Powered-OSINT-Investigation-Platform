@@ -1,15 +1,25 @@
 import { type ReactNode, useEffect } from "react";
+import clsx from "clsx";
 import { X } from "lucide-react";
 import { Button } from "./Button";
+
+type ModalSize = "sm" | "lg" | "xl";
 
 interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
   title: string;
   children: ReactNode;
+  size?: ModalSize;
 }
 
-export function Modal({ isOpen, onClose, title, children }: ModalProps) {
+const sizeClasses: Record<ModalSize, string> = {
+  sm: "max-w-lg",
+  lg: "max-w-2xl",
+  xl: "max-w-4xl",
+};
+
+export function Modal({ isOpen, onClose, title, children, size = "sm" }: ModalProps) {
   useEffect(() => {
     function handleEscape(event: KeyboardEvent) {
       if (event.key === "Escape") onClose();
@@ -33,10 +43,13 @@ export function Modal({ isOpen, onClose, title, children }: ModalProps) {
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl dark:bg-surface-darkAlt"
+        className={clsx(
+          "flex max-h-[90vh] w-full flex-col rounded-xl bg-white shadow-xl dark:bg-surface-darkAlt",
+          sizeClasses[size]
+        )}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="mb-4 flex items-center justify-between">
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-slate-800">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
             {title}
           </h2>
@@ -48,7 +61,7 @@ export function Modal({ isOpen, onClose, title, children }: ModalProps) {
             <X className="h-5 w-5" />
           </button>
         </div>
-        {children}
+        <div className="overflow-y-auto px-6 py-4">{children}</div>
       </div>
     </div>
   );

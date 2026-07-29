@@ -211,7 +211,7 @@ export function DashboardPage() {
             New Investigation
           </Link>
           <Link
-            to="/investigations?new=true&type=file"
+            to="/investigations?new=true&new_type=file"
             className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
           >
             <Upload className="h-4 w-4" />

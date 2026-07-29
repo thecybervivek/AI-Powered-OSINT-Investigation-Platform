@@ -15,6 +15,7 @@ from sqlalchemy.orm import Mapped
 from sqlalchemy.orm import mapped_column
 from sqlalchemy.orm import relationship
 
+from backend.app.core.intelligence.db_types import StringBackedEnum
 from backend.app.models.base import BaseModel
 from backend.app.models.base import TimestampMixin
 
@@ -107,7 +108,7 @@ class Investigation(
     )
 
     investigation_type: Mapped[InvestigationType] = mapped_column(
-        SqlEnum(InvestigationType),
+        StringBackedEnum(InvestigationType, length=64),
         nullable=False,
         index=True,
     )

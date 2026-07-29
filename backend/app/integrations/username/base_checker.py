@@ -7,9 +7,11 @@ from dataclasses import dataclass
 import httpx
 
 from backend.app.core.config import settings
+from backend.app.integrations.exceptions import IntegrationTimeoutError
 from backend.app.integrations.username.platforms import DetectionMethod
 from backend.app.integrations.username.platforms import PlatformDefinition
 from backend.app.utils.http_client import assert_public_url
+from backend.app.utils.http_client import request_with_retry
 
 logger = logging.getLogger("app.integrations.username")
 
@@ -53,10 +55,21 @@ async def check_single_platform(
         try:
             assert_public_url(profile_url)
 
-            response = await client.get(
+            # request_with_retry re-validates every redirect hop and
+            # pins each connection to its validated IP (see
+            # utils/http_client.py) - a platform's own redirect can't
+            # be used to reach an internal target. max_retries=0
+            # preserves this call site's existing fail-fast-per-platform
+            # behavior: with 30-100+ platforms checked per investigation,
+            # retrying a single slow/down site would slow the whole
+            # batch for no benefit - a platform that fails once is
+            # simply reported inconclusive, same as before.
+            response = await request_with_retry(
+                client,
+                "GET",
                 profile_url,
+                max_retries=0,
                 headers={"User-Agent": settings.OSINT_HTTP_USER_AGENT},
-                follow_redirects=True,
                 timeout=settings.USERNAME_CHECK_TIMEOUT_SECONDS,
             )
 
@@ -73,7 +86,7 @@ async def check_single_platform(
                 latency_ms=latency_ms,
             )
 
-        except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError) as error:
+        except (IntegrationTimeoutError, httpx.ConnectError, httpx.RemoteProtocolError) as error:
 
             return PlatformCheckResult(
                 platform=platform.name,

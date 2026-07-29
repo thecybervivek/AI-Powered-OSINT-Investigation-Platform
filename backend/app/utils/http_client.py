@@ -107,14 +107,21 @@ async def request_with_retry(
     """
     Central outbound HTTP policy.
 
-    Every outbound destination and redirect hop is validated before
-    the request is sent.
+    Every outbound destination and redirect hop is validated before the
+    request is sent, AND the request is then connected directly to the
+    specific IP address that was just validated - not re-resolved by
+    httpx at connect time. This closes the DNS-rebinding TOCTOU window:
+    if hostname validation and the actual TCP connection each did their
+    own DNS lookup, an attacker-controlled DNS server could serve a
+    public IP for the validation lookup and a private/internal IP for
+    the connection lookup a few milliseconds later. Pinning the
+    connection to the already-validated address eliminates that second,
+    untrusted lookup entirely.
 
-    DNS is checked immediately before each request. httpx still performs
-    its own DNS resolution, so application-layer validation cannot fully
-    eliminate DNS rebinding. Production egress filtering/firewall rules
-    must independently block private, loopback, link-local, multicast,
-    reserved, unspecified, and metadata networks.
+    The original hostname is preserved via the `Host` header and the
+    `sni_hostname` extension, so virtual-hosted / CDN-fronted targets
+    and TLS certificate validation continue to work exactly as if the
+    hostname had been connected to directly.
     """
 
     retries = (
@@ -148,13 +155,59 @@ async def request_with_retry(
         try:
             for _ in range(_MAX_REDIRECTS + 1):
 
+                request_url = current_url
+                request_headers = dict(headers)
+                extensions = dict(kwargs.pop("extensions", {}) or {})
+
                 if enforce_public_destination:
-                    assert_public_url(current_url)
+
+                    parsed = urlparse(current_url)
+
+                    if parsed.scheme not in {"http", "https"}:
+                        raise ValueError(
+                            "Only HTTP(S) destinations are permitted."
+                        )
+
+                    if parsed.username or parsed.password:
+                        raise ValueError(
+                            "User-info in outbound URLs is not permitted."
+                        )
+
+                    if not parsed.hostname:
+                        raise ValueError("URL has no hostname.")
+
+                    original_hostname = parsed.hostname
+
+                    # Validate now, then pin the connection to exactly
+                    # this address - see docstring above.
+                    validated_addresses = resolve_public_addresses(
+                        original_hostname
+                    )
+                    pinned_ip = validated_addresses[0]
+
+                    pinned_netloc = (
+                        f"[{pinned_ip}]"
+                        if pinned_ip.version == 6
+                        else str(pinned_ip)
+                    )
+
+                    if parsed.port:
+                        pinned_netloc += f":{parsed.port}"
+
+                    request_url = parsed._replace(
+                        netloc=pinned_netloc
+                    ).geturl()
+
+                    request_headers.setdefault("Host", original_hostname)
+                    extensions.setdefault(
+                        "sni_hostname", original_hostname
+                    )
 
                 response = await client.request(
                     current_method,
-                    current_url,
-                    headers=headers,
+                    request_url,
+                    headers=request_headers,
+                    extensions=extensions,
                     follow_redirects=False,
                     **kwargs,
                 )
@@ -173,8 +226,12 @@ async def request_with_retry(
                 if not location:
                     return response
 
+                # Resolve the redirect against the ORIGINAL (hostname)
+                # URL, not the pinned-IP URL that was actually
+                # requested, so relative Location headers and any
+                # further validation reason about real hostnames.
                 current_url = urljoin(
-                    str(response.url),
+                    current_url,
                     location,
                 )
 

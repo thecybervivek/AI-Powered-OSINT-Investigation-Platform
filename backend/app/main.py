@@ -12,6 +12,8 @@ from backend.app.api.v1.router import api_router
 from backend.app.core.config import settings
 from backend.app.core.logging_config import configure_logging
 from backend.app.core.rate_limit import limiter
+from backend.app.core.redis_health import redis_health
+from backend.app.core.redis_health import redis_is_required
 from backend.app.db.database import database_health
 from backend.app.middleware.logging_middleware import RequestLoggingMiddleware
 from backend.app.middleware.security_headers import SecurityHeadersMiddleware
@@ -93,10 +95,39 @@ async def health():
 
 @app.get("/ready", tags=["Health"])
 async def ready():
-    """Readiness probe: only healthy when the database is reachable."""
-    if not database_health():
-        return JSONResponse(status_code=503, content={"status": "not_ready", "database": "unavailable"})
-    return {"status": "ready", "database": "healthy"}
+    """
+    Readiness probe: continuously evaluates required runtime
+    dependencies. Database is always required. Redis is only required
+    when something is actually configured to depend on it (currently
+    RATE_LIMIT_BACKEND=="redis") - an unconfigured/optional dependency
+    being unavailable must not make the whole application unready.
+    """
+
+    db_ok = database_health()
+    redis_required = redis_is_required()
+    redis_reachable = await redis_health()
+
+    if not redis_required:
+        redis_status = "not_configured"
+    elif redis_reachable:
+        redis_status = "ready"
+    else:
+        redis_status = "unavailable"
+
+    checks = {
+        "database": "ready" if db_ok else "unavailable",
+        "redis": redis_status,
+    }
+
+    is_ready = db_ok and (redis_reachable or not redis_required)
+
+    if not is_ready:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "not_ready", **checks},
+        )
+
+    return {"status": "ready", **checks}
 
 
 @app.get("/ping", tags=["Health"])

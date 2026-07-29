@@ -1,13 +1,12 @@
 import { useState } from "react";
 import { useSearchParams, useNavigate, Link } from "react-router-dom";
-import { Plus, Search as SearchIcon, Trash2, Upload } from "lucide-react";
+import { Plus, Search as SearchIcon, Trash2 } from "lucide-react";
 
 import {
   useInvestigations,
   useDeleteInvestigation,
 } from "@/hooks/useInvestigations";
 
-import { investigationService } from "@/services/investigationService";
 import { useToast } from "@/contexts/ToastContext";
 
 import { Card } from "@/components/Card";
@@ -15,9 +14,11 @@ import { Button } from "@/components/Button";
 import { RiskBadge, StatusBadge } from "@/components/Badge";
 import { TableSkeleton } from "@/components/LoadingSkeleton";
 import { EmptyState, ErrorState } from "@/components/StateViews";
-import { Modal, ConfirmDialog } from "@/components/Modal";
+import { ConfirmDialog } from "@/components/Modal";
 import { Pagination } from "@/components/Pagination";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
+import { NewInvestigationModal } from "@/components/investigations/NewInvestigationModal";
+import { INVESTIGATION_TYPE_DEFINITIONS } from "@/components/investigations/investigationTypes.config";
 
 import { formatDate, truncate } from "@/utils/formatters";
 
@@ -27,49 +28,28 @@ import type {
 } from "@/types/investigation";
 
 
+// Sourced from the same presentation config the New Investigation
+// selector uses (so labels can't drift), extended with types that
+// exist on the backend but aren't offered as creatable cards (e.g.
+// "breach", which is reached indirectly via Email Intelligence) so
+// analysts can still filter the list by every type that can actually
+// appear in it.
+const EXTRA_FILTER_LABELS: Partial<Record<InvestigationType, string>> = {
+  breach: "Breach",
+};
+
 const TYPE_OPTIONS: {
   value: InvestigationType;
   label: string;
 }[] = [
-  { value: "username", label: "Username" },
-  { value: "email", label: "Email" },
-  { value: "domain", label: "Domain" },
-  { value: "ip_address", label: "IP Address" },
-
-  { value: "dns", label: "DNS Intelligence" },
-
-  { value: "url", label: "URL" },
-
-  { value: "phone", label: "Phone Intelligence" },
-
-  { value: "file", label: "File Intelligence" },
-
-  {
-    value: "reverse_image",
-    label: "Reverse Image Intelligence",
-  },
-
-  { value: "breach", label: "Breach" },
-
-  {
-    value: "threat_intelligence",
-    label: "Threat Intelligence",
-  },
-
-  {
-    value: "social_media",
-    label: "Social Media",
-  },
-
-  {
-    value: "malware",
-    label: "Malware Intelligence",
-  },
-
-  {
-    value: "risk_assessment",
-    label: "Composite Risk Assessment",
-  },
+  ...INVESTIGATION_TYPE_DEFINITIONS.map((def) => ({
+    value: def.type,
+    label: def.label,
+  })),
+  ...Object.entries(EXTRA_FILTER_LABELS).map(([value, label]) => ({
+    value: value as InvestigationType,
+    label,
+  })),
 ];
 
 
@@ -107,6 +87,14 @@ export function InvestigationListPage() {
 
   const isNewModalOpen =
     searchParams.get("new") === "true";
+
+  // Deliberately a different param than `type` (the list's own type
+  // filter, above) - reusing `type` for both meant a Dashboard link
+  // like ?new=true&type=file also silently filtered the investigations
+  // table to "file" behind the modal. `new_type` only ever preselects
+  // the New Investigation form.
+  const initialModalType =
+    (searchParams.get("new_type") as InvestigationType) || undefined;
 
 
   const [searchInput, setSearchInput] =
@@ -501,16 +489,18 @@ export function InvestigationListPage() {
 
       <NewInvestigationModal
         isOpen={isNewModalOpen}
+        initialType={initialModalType}
         onClose={() =>
           updateParams({
             new: undefined,
-            type: undefined,
+            new_type: undefined,
           })
         }
         onCreated={(id) => {
 
           updateParams({
             new: undefined,
+            new_type: undefined,
           });
 
           navigate(
@@ -544,663 +534,3 @@ export function InvestigationListPage() {
   );
 }
 
-
-function NewInvestigationModal({
-  isOpen,
-  onClose,
-  onCreated,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  onCreated: (id: string) => void;
-}) {
-
-  const { showToast } =
-    useToast();
-
-  const [type, setType] =
-    useState<InvestigationType>(
-      "username"
-    );
-
-  const [value, setValue] =
-    useState("");
-
-  const [file, setFile] =
-    useState<File | null>(null);
-
-  const [riskIds, setRiskIds] =
-    useState("");
-
-  const [
-    isSubmitting,
-    setIsSubmitting,
-  ] = useState(false);
-
-
-  function resetForm() {
-    setValue("");
-    setFile(null);
-    setRiskIds("");
-  }
-
-
-  function handleTypeChange(
-    nextType: InvestigationType
-  ) {
-    setType(nextType);
-
-    resetForm();
-  }
-
-
-  async function handleSubmit(
-    event: React.FormEvent
-  ) {
-
-    event.preventDefault();
-
-    setIsSubmitting(true);
-
-
-    try {
-
-      let investigationId: string;
-
-
-      switch (type) {
-
-        case "username": {
-
-          const result =
-            await investigationService.createUsername(
-              value.trim()
-            );
-
-          investigationId =
-            result.id;
-
-          break;
-        }
-
-
-        case "email": {
-
-          const result =
-            await investigationService.createEmail(
-              value.trim()
-            );
-
-          investigationId =
-            result.id;
-
-          break;
-        }
-
-
-        case "domain": {
-
-          const result =
-            await investigationService.createDomain(
-              value.trim()
-            );
-
-          investigationId =
-            result.id;
-
-          break;
-        }
-
-
-        case "ip_address": {
-
-          const result =
-            await investigationService.createIp(
-              value.trim()
-            );
-
-          investigationId =
-            result.id;
-
-          break;
-        }
-
-
-        case "dns": {
-
-          const result =
-            await investigationService.createDns(
-              value.trim()
-            );
-
-          investigationId =
-            result.id;
-
-          break;
-        }
-
-
-        case "url": {
-
-          const result =
-            await investigationService.createUrl(
-              value.trim()
-            );
-
-          investigationId =
-            result.id;
-
-          break;
-        }
-
-
-        case "phone": {
-
-          const result =
-            await investigationService.createPhone(
-              value.trim()
-            );
-
-          investigationId =
-            result.id;
-
-          break;
-        }
-
-
-        case "breach": {
-
-          const result =
-            await investigationService.createBreach(
-              value.trim()
-            );
-
-          investigationId =
-            result.id;
-
-          break;
-        }
-
-
-        case "threat_intelligence": {
-
-          const result =
-            await investigationService.createThreatIntelligence(
-              value.trim()
-            );
-
-          investigationId =
-            result.id;
-
-          break;
-        }
-
-
-        case "social_media": {
-
-          const result =
-            await investigationService.createSocialMedia(
-              value.trim()
-            );
-
-          investigationId =
-            result.id;
-
-          break;
-        }
-
-
-        case "malware": {
-
-          const fileHash =
-            value.trim().toLowerCase();
-
-          if (
-            !/^(?:[a-f0-9]{32}|[a-f0-9]{40}|[a-f0-9]{64})$/.test(
-              fileHash
-            )
-          ) {
-            throw new Error(
-              "Enter a valid MD5, SHA1, or SHA256 hash."
-            );
-          }
-
-          const result =
-            await investigationService.createMalware(
-              fileHash
-            );
-
-          investigationId =
-            result.id;
-
-          break;
-        }
-
-
-        case "risk_assessment": {
-
-          const ids = riskIds
-            .split(",")
-            .map((id) => id.trim())
-            .filter(Boolean);
-
-
-          if (ids.length < 2) {
-
-            throw new Error(
-              "Provide at least two investigation IDs."
-            );
-
-          }
-
-
-          const result =
-            await investigationService.createRiskAssessment(
-              ids,
-              value.trim() ||
-                undefined
-            );
-
-          investigationId =
-            result.id;
-
-          break;
-        }
-
-
-        case "file": {
-
-          if (!file) {
-
-            throw new Error(
-              "Please choose a file."
-            );
-
-          }
-
-
-          const result =
-            await investigationService.uploadFile(
-              file
-            );
-
-          investigationId =
-            result.investigation.id;
-
-          break;
-        }
-
-
-        case "reverse_image": {
-
-          if (!file) {
-
-            throw new Error(
-              "Please choose an image."
-            );
-
-          }
-
-
-          if (
-            file.type &&
-            !file.type.startsWith(
-              "image/"
-            )
-          ) {
-
-            throw new Error(
-              "Selected file must be an image."
-            );
-
-          }
-
-
-          const result =
-            await investigationService.uploadReverseImage(
-              file
-            );
-
-          investigationId =
-            result.investigation.id;
-
-          break;
-        }
-
-
-        default:
-
-          throw new Error(
-            "Unsupported investigation type."
-          );
-
-      }
-
-
-      showToast(
-        "success",
-        "Investigation started."
-      );
-
-
-      resetForm();
-
-      onCreated(
-        investigationId
-      );
-
-
-    } catch (error) {
-
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Failed to start investigation. Please check your input.";
-
-
-      showToast(
-        "error",
-        message
-      );
-
-
-    } finally {
-
-      setIsSubmitting(false);
-
-    }
-
-  }
-
-
-  const isUploadType =
-    type === "file" ||
-    type === "reverse_image";
-
-
-  const targetLabel =
-    type === "dns"
-      ? "Domain"
-      : type === "phone"
-      ? "Phone Number"
-      : type === "malware"
-      ? "File Hash"
-      : "Target";
-
-
-  const targetPlaceholder =
-    type === "email"
-      ? "person@example.com"
-      : type === "url"
-      ? "https://example.com/path"
-      : type === "ip_address"
-      ? "8.8.8.8"
-      : type === "domain" ||
-        type === "dns"
-      ? "example.com"
-      : type === "phone"
-      ? "+919876543210"
-      : type === "malware"
-      ? "MD5, SHA1, or SHA256 hash"
-      : type === "threat_intelligence"
-      ? "IP address, domain, or supported indicator"
-      : type === "breach"
-      ? "person@example.com"
-      : "username";
-
-
-  return (
-
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title="New Investigation"
-    >
-
-      <form
-        onSubmit={handleSubmit}
-        className="space-y-4"
-      >
-
-
-        <div>
-
-          <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-            Investigation Type
-          </label>
-
-
-          <select
-            value={type}
-            onChange={(event) =>
-              handleTypeChange(
-                event.target
-                  .value as InvestigationType
-              )
-            }
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-          >
-
-            {TYPE_OPTIONS.map(
-              (opt) => (
-
-                <option
-                  key={opt.value}
-                  value={opt.value}
-                >
-                  {opt.label}
-                </option>
-
-              )
-            )}
-
-          </select>
-
-        </div>
-
-
-        {isUploadType ? (
-
-          <div>
-
-            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-
-              {type ===
-              "reverse_image"
-                ? "Image"
-                : "File"}
-
-            </label>
-
-
-            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 px-4 py-6 text-sm text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">
-
-              <Upload className="h-4 w-4" />
-
-
-              {file
-                ? file.name
-                : type ===
-                  "reverse_image"
-                ? "Choose an image to investigate"
-                : "Choose a file to upload"}
-
-
-              <input
-                type="file"
-                accept={
-                  type ===
-                  "reverse_image"
-                    ? "image/*"
-                    : undefined
-                }
-                className="hidden"
-                onChange={(event) =>
-                  setFile(
-                    event.target
-                      .files?.[0] ??
-                      null
-                  )
-                }
-              />
-
-            </label>
-
-
-            {type ===
-              "reverse_image" && (
-
-              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-
-                The image will be analyzed for fingerprints,
-                metadata, and matches against previously
-                investigated images.
-
-              </p>
-
-            )}
-
-          </div>
-
-
-        ) : type ===
-          "risk_assessment" ? (
-
-          <div className="space-y-3">
-
-
-            <div>
-
-              <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                Label
-              </label>
-
-              <input
-                value={value}
-                onChange={(event) =>
-                  setValue(
-                    event.target.value
-                  )
-                }
-                placeholder="Composite Risk Assessment"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-              />
-
-            </div>
-
-
-            <div>
-
-              <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                Investigation IDs
-              </label>
-
-              <textarea
-                value={riskIds}
-                onChange={(event) =>
-                  setRiskIds(
-                    event.target.value
-                  )
-                }
-                placeholder="id-1, id-2"
-                required
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-              />
-
-              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                Enter at least two investigation IDs separated by commas.
-              </p>
-
-            </div>
-
-
-          </div>
-
-
-        ) : (
-
-          <div>
-
-            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-
-              {targetLabel}
-
-            </label>
-
-
-            <input
-              value={value}
-              onChange={(event) =>
-                setValue(
-                  event.target.value
-                )
-              }
-              placeholder={
-                targetPlaceholder
-              }
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-              required
-            />
-
-
-            {type === "dns" && (
-
-              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                Enter a bare domain such as example.com.
-              </p>
-
-            )}
-
-
-            {type === "phone" && (
-
-              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                International format is recommended, for example +919876543210.
-              </p>
-
-            )}
-
-
-            {type ===
-              "malware" && (
-
-              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                Supported indicators: MD5, SHA1, and SHA256 file hashes.
-              </p>
-
-            )}
-
-          </div>
-
-        )}
-
-
-        <div className="flex justify-end gap-3">
-
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={onClose}
-          >
-            Cancel
-          </Button>
-
-
-          <Button
-            type="submit"
-            isLoading={
-              isSubmitting
-            }
-          >
-            Start Investigation
-          </Button>
-
-        </div>
-
-
-      </form>
-
-    </Modal>
-
-  );
-}

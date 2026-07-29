@@ -70,4 +70,15 @@ limiter = Limiter(
     storage_uri=_build_storage_uri(),
     default_limits=[settings.RATE_LIMIT_DEFAULT] if settings.RATE_LIMIT_ENABLED else [],
     enabled=settings.RATE_LIMIT_ENABLED,
+    # A Redis-backend outage must degrade rate limiting, not the whole
+    # application: without these, slowapi's exception handler receives
+    # a raw storage ConnectionError (not a RateLimitExceeded) and
+    # crashes with an unhandled AttributeError on every single request
+    # - including /health and /ready themselves. swallow_errors treats
+    # a storage failure as "allow the request"; in_memory_fallback
+    # keeps some (process-local) protection active in the meantime
+    # rather than going fully unprotected.
+    swallow_errors=True,
+    in_memory_fallback_enabled=True,
+    in_memory_fallback=[settings.RATE_LIMIT_DEFAULT] if settings.RATE_LIMIT_ENABLED else [],
 )

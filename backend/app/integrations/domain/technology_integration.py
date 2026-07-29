@@ -76,7 +76,6 @@ class TechnologyDetectionIntegration(AsyncBaseIntegration):
 
         async with httpx.AsyncClient(
             timeout=settings.OSINT_REQUEST_TIMEOUT_SECONDS,
-            follow_redirects=True,
         ) as client:
 
             try:

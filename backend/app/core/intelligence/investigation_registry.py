@@ -1,0 +1,311 @@
+"""
+Investigation Type Registry - single source of truth.
+
+Today, adding a module means touching: the backend Python enum, a
+PostgreSQL native-enum migration, frontend TypeScript unions, the
+"New Investigation" modal, service routing, and labels/descriptions -
+independently, by hand, with no single place that can't drift out of
+sync. This registry is that single place.
+
+CRITICAL FINDING FROM AUDITING THIS BASELINE: every investigation-type
+enum-value migration added in this project so far (Milestone 9's
+'file', 'social_media', 'breach', 'threat_intelligence', 'malware',
+'risk_assessment' migrations) added the WRONG PostgreSQL enum label.
+SQLAlchemy's native `Enum` type persists a Python Enum member's `.name`
+(e.g. "FILE") by default, NOT its `.value` (e.g. "file"), unless the
+column is built with `values_callable`. Every one of those migrations
+ran `ALTER TYPE investigationtype ADD VALUE 'file'` (lowercase) - a
+label PostgreSQL would never actually be asked for, since SQLAlchemy
+sends "FILE". A later migration in this baseline
+(e7b34217b5d9_fix_investigation_type_enum_values.py, apparently from
+Account 1) already patched this by adding the correct uppercase labels
+alongside the incorrect lowercase ones it left in place.
+
+This registry - combined with the migration in this same delivery that
+converts investigation_type from a native Postgres ENUM to a plain
+VARCHAR - is the actual fix: once the column is a plain string, adding
+a new investigation type is a one-line change to this file, with NO
+database migration required at all, and the enum-name-vs-value
+footgun stops being possible by construction.
+"""
+
+from dataclasses import dataclass
+from dataclasses import field
+
+
+@dataclass(frozen=True)
+class InvestigationTypeDefinition:
+
+    identifier: str  # must match InvestigationType.<MEMBER>.value exactly
+    label: str
+    category: str  # e.g. "identity", "infrastructure", "threat", "risk"
+    description: str
+    icon: str
+    input_type: str  # "username" | "email" | "domain_or_ip" | "url" | "phone" | "hash" | "file" | "investigation_id_list"
+    validation_hint: str
+    supported_capabilities: tuple[str, ...] = field(default_factory=tuple)
+
+    # Independently trackable maturity signals - the whole point being
+    # that "UI says supported" and "this actually works" can now be
+    # compared instead of assumed equal.
+    implementation_state: str = "implemented"  # implemented | partial | planned
+    api_state: str = "untested"                # tested | untested | broken
+    ui_state: str = "unknown"                   # stable | experimental | missing | unknown
+    provider_state: str = "unknown"              # full | partial | none | unknown
+    production_status: str = "experimental"      # production | experimental | beta | deprecated
+
+    def to_dict(self) -> dict:
+
+        return {
+            "identifier": self.identifier,
+            "label": self.label,
+            "category": self.category,
+            "description": self.description,
+            "icon": self.icon,
+            "input_type": self.input_type,
+            "validation_hint": self.validation_hint,
+            "supported_capabilities": list(self.supported_capabilities),
+            "implementation_state": self.implementation_state,
+            "api_state": self.api_state,
+            "ui_state": self.ui_state,
+            "provider_state": self.provider_state,
+            "production_status": self.production_status,
+        }
+
+
+# NOTE: `implementation_state`/`api_state`/`ui_state`/`provider_state`/
+# `production_status` below reflect what THIS delivery (Account 2's
+# track) can actually verify from the backend/service code audited in
+# this pass. Account 3 owns UI truth and Account 1 owns deployment
+# truth - both should correct their respective fields here rather than
+# maintaining a second, separate source for the same facts. See the
+# integration notes in the delivery summary.
+INVESTIGATION_TYPE_REGISTRY: dict[str, InvestigationTypeDefinition] = {
+    d.identifier: d
+    for d in [
+        InvestigationTypeDefinition(
+            identifier="username",
+            label="Username Intelligence",
+            category="identity",
+            description="Public profile existence across social/dev/media platforms.",
+            icon="user-search",
+            input_type="username",
+            validation_hint="Letters, numbers, dots, underscores, hyphens only.",
+            supported_capabilities=("profile_discovery", "platform_presence"),
+            api_state="tested",
+            provider_state="full",
+            production_status="production",
+        ),
+        InvestigationTypeDefinition(
+            identifier="email",
+            label="Email Intelligence",
+            category="identity",
+            description="Reputation, breach history, disposable-address, and MX checks.",
+            icon="mail-search",
+            input_type="email",
+            validation_hint="A valid email address.",
+            supported_capabilities=("reputation", "breach_history", "mx_lookup"),
+            api_state="tested",
+            provider_state="partial",
+            production_status="production",
+        ),
+        InvestigationTypeDefinition(
+            identifier="domain",
+            label="Domain Intelligence",
+            category="infrastructure",
+            description="WHOIS, DNS, SSL certificate, and technology detection.",
+            icon="globe",
+            input_type="domain_or_ip",
+            validation_hint="A domain name or IP address.",
+            supported_capabilities=("whois", "dns", "ssl", "technology_detection"),
+            api_state="tested",
+            provider_state="full",
+            production_status="production",
+        ),
+        InvestigationTypeDefinition(
+            identifier="ip_address",
+            label="IP Intelligence",
+            category="infrastructure",
+            description="Geolocation, ASN, and abuse/reputation checks.",
+            icon="server",
+            input_type="domain_or_ip",
+            validation_hint="An IPv4/IPv6 address or a domain to resolve.",
+            supported_capabilities=("geolocation", "asn", "reputation"),
+            api_state="tested",
+            provider_state="partial",
+            production_status="production",
+        ),
+        InvestigationTypeDefinition(
+            identifier="dns",
+            label="DNS Intelligence",
+            category="infrastructure",
+            description="Subdomain enumeration, DMARC/SPF analysis, passive DNS.",
+            icon="network",
+            input_type="domain_or_ip",
+            validation_hint="A bare domain name.",
+            supported_capabilities=("subdomain_enum", "spf", "dmarc", "passive_dns"),
+            api_state="tested",
+            provider_state="partial",
+            production_status="beta",
+        ),
+        InvestigationTypeDefinition(
+            identifier="url",
+            label="URL Intelligence",
+            category="infrastructure",
+            description="Domain context plus VirusTotal/URLScan verdicts for a specific link.",
+            icon="link",
+            input_type="url",
+            validation_hint="A full URL including http(s)://.",
+            supported_capabilities=("reputation", "sandbox_analysis"),
+            api_state="tested",
+            provider_state="partial",
+            production_status="production",
+        ),
+        InvestigationTypeDefinition(
+            identifier="phone",
+            label="Phone Intelligence",
+            category="identity",
+            description="Validation, carrier/country/region/timezone lookup, E.164 formatting.",
+            icon="phone",
+            input_type="phone",
+            validation_hint="Include country code, e.g. +1...",
+            supported_capabilities=("validation", "carrier_lookup"),
+            api_state="tested",
+            provider_state="partial",
+            production_status="beta",
+        ),
+        InvestigationTypeDefinition(
+            identifier="metadata",
+            label="File Metadata",
+            category="file",
+            description="EXIF/document metadata extraction.",
+            icon="file-text",
+            input_type="file",
+            validation_hint="Upload a file.",
+            supported_capabilities=("metadata_extraction",),
+            implementation_state="partial",
+            api_state="untested",
+            provider_state="unknown",
+            production_status="experimental",
+        ),
+        InvestigationTypeDefinition(
+            identifier="reverse_image",
+            label="Reverse Image Intelligence",
+            category="file",
+            description="Perceptual hashing and near-duplicate detection against your own history.",
+            icon="image-search",
+            input_type="file",
+            validation_hint="Upload an image.",
+            supported_capabilities=("perceptual_hash", "duplicate_detection"),
+            api_state="tested",
+            ui_state="experimental",
+            provider_state="partial",
+            production_status="experimental",
+        ),
+        InvestigationTypeDefinition(
+            identifier="file",
+            label="File Intelligence",
+            category="file",
+            description="Hashing, metadata, YARA scanning, and hash-reputation lookups.",
+            icon="file-search",
+            input_type="file",
+            validation_hint="Upload a file for analysis.",
+            supported_capabilities=("hashing", "yara", "reputation"),
+            api_state="tested",
+            provider_state="partial",
+            production_status="beta",
+        ),
+        InvestigationTypeDefinition(
+            identifier="social_media",
+            label="Social Media Intelligence",
+            category="identity",
+            description="Public profile discovery and username correlation across named platforms.",
+            icon="users",
+            input_type="username",
+            validation_hint="A primary username, optionally with related aliases.",
+            supported_capabilities=("profile_discovery", "username_correlation"),
+            api_state="tested",
+            provider_state="full",
+            production_status="beta",
+        ),
+        InvestigationTypeDefinition(
+            identifier="breach",
+            label="Breach Intelligence",
+            category="identity",
+            description="Breach timeline, exposed emails/domains, password exposure status.",
+            icon="shield-alert",
+            input_type="email",
+            validation_hint="An email address or a bare domain.",
+            supported_capabilities=("breach_timeline", "password_exposure"),
+            api_state="tested",
+            provider_state="partial",
+            production_status="beta",
+        ),
+        InvestigationTypeDefinition(
+            identifier="threat_intelligence",
+            label="Threat Intelligence",
+            category="threat",
+            description="Host intelligence, threat reputation, and historical DNS across 5 providers.",
+            icon="crosshair",
+            input_type="domain_or_ip",
+            validation_hint="An IP address or a domain.",
+            supported_capabilities=("host_intel", "threat_reputation", "historical_dns"),
+            api_state="tested",
+            provider_state="partial",
+            production_status="beta",
+        ),
+        InvestigationTypeDefinition(
+            identifier="malware",
+            label="Malware Intelligence",
+            category="threat",
+            description="Family lookup, classification, campaign correlation, IOC correlation.",
+            icon="bug",
+            input_type="hash",
+            validation_hint="An MD5, SHA1, or SHA256 hash.",
+            supported_capabilities=("family_lookup", "classification", "ioc_correlation"),
+            api_state="tested",
+            provider_state="partial",
+            production_status="beta",
+        ),
+        InvestigationTypeDefinition(
+            identifier="risk_assessment",
+            label="Composite Risk Assessment",
+            category="risk",
+            description="Combines multiple past investigations into one composite assessment.",
+            icon="gauge",
+            input_type="investigation_id_list",
+            validation_hint="2-20 of your own past investigation IDs.",
+            supported_capabilities=("composite_scoring", "evidence_correlation"),
+            api_state="tested",
+            provider_state="none",  # reuses existing evidence, runs no providers of its own
+            production_status="experimental",
+        ),
+    ]
+}
+
+
+def get_definition(identifier: str) -> InvestigationTypeDefinition | None:
+    return INVESTIGATION_TYPE_REGISTRY.get(identifier)
+
+
+def list_definitions() -> list[InvestigationTypeDefinition]:
+    return list(INVESTIGATION_TYPE_REGISTRY.values())
+
+
+def list_by_category(category: str) -> list[InvestigationTypeDefinition]:
+    return [d for d in INVESTIGATION_TYPE_REGISTRY.values() if d.category == category]
+
+
+def is_registered(identifier: str) -> bool:
+    return identifier in INVESTIGATION_TYPE_REGISTRY
+
+
+def registry_as_json_export() -> list[dict]:
+    """
+    What a frontend (Account 3) or a docs/release-audit script would
+    consume - one flat, serializable list, so the TypeScript union, the
+    "New Investigation" modal, and any README/capability audit can all
+    be generated FROM this instead of hand-maintained separately.
+    """
+
+    return [d.to_dict() for d in list_definitions()]

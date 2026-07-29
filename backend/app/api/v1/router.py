@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from backend.app.api.v1.endpoints.auth import router as auth_router
 from backend.app.api.v1.endpoints.breach import router as breach_router
+from backend.app.api.v1.endpoints.capabilities import router as capabilities_router
 from backend.app.api.v1.endpoints.composite_risk import router as composite_risk_router
 from backend.app.api.v1.endpoints.dns_intelligence import router as dns_intelligence_router
 from backend.app.api.v1.endpoints.malware_intelligence import router as malware_intelligence_router
@@ -142,3 +143,8 @@ api_router.include_router(threat_intelligence_router, prefix="/investigations/th
 api_router.include_router(dns_intelligence_router, prefix="/investigations/dns-intelligence", tags=["DNS Intelligence"])
 api_router.include_router(malware_intelligence_router, prefix="/investigations/malware", tags=["Malware Intelligence"])
 api_router.include_router(composite_risk_router, prefix="/investigations/risk-assessment", tags=["Composite Risk Engine"])
+
+# ==========================================================
+# Shared Intelligence Architecture - Capability Registry (Account 2)
+# ==========================================================
+api_router.include_router(capabilities_router, prefix="/capabilities", tags=["Capability Registry"])

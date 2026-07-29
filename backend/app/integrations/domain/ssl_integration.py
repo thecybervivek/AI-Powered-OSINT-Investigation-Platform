@@ -6,9 +6,8 @@ from datetime import timezone
 from backend.app.core.config import settings
 from backend.app.integrations.base import AsyncBaseIntegration
 from backend.app.integrations.base import IntegrationResult
-from backend.app.integrations.exceptions import IntegrationTimeoutError
 from backend.app.models.investigation import ModuleResultStatus
-from backend.app.utils.http_client import assert_public_url
+from backend.app.utils.http_client import resolve_public_addresses
 
 _CERT_DATE_FORMAT = "%b %d %H:%M:%S %Y %Z"
 
@@ -33,7 +32,24 @@ class SSLCertificateIntegration(AsyncBaseIntegration):
         host = host.split("://")[-1].split("/")[0].split(":")[0]
 
         try:
-            assert_public_url(f"https://{host}")
+            # Resolve and validate now, then connect directly to a
+            # validated IP (not the hostname) below - this is the same
+            # DNS-rebinding TOCTOU fix as request_with_retry in
+            # http_client.py: asyncio's own connector would otherwise
+            # re-resolve the hostname at connect time, and an
+            # attacker-controlled DNS server could serve a different
+            # (private/internal) address for that second lookup.
+            validated_addresses = resolve_public_addresses(host)
+
+            # IPv4 first: broader outbound compatibility across runtimes
+            # (some environments resolve AAAA records but have no
+            # working IPv6 egress), while still trying every validated
+            # address rather than giving up after just one.
+            candidate_ips = sorted(
+                (str(addr) for addr in validated_addresses),
+                key=lambda ip: ":" in ip,
+            )
+
         except ValueError as error:
             return IntegrationResult(
                 source=self.source_name,
@@ -42,44 +58,53 @@ class SSLCertificateIntegration(AsyncBaseIntegration):
             )
 
         context = ssl.create_default_context()
+        loop = asyncio.get_running_loop()
 
-        try:
-            loop = asyncio.get_running_loop()
+        transport = None
+        connect_errors: list[str] = []
 
-            transport, _ = await asyncio.wait_for(
-                loop.create_connection(
-                    lambda: asyncio.Protocol(),
-                    host=host,
-                    port=443,
-                    ssl=context,
-                    server_hostname=host,
-                ),
-                timeout=settings.SSL_CHECK_TIMEOUT_SECONDS,
-            )
+        for candidate_ip in candidate_ips:
 
-        except asyncio.TimeoutError as error:
-            raise IntegrationTimeoutError(
-                f"TLS handshake with '{host}' timed out."
-            ) from error
+            try:
+                transport, _ = await asyncio.wait_for(
+                    loop.create_connection(
+                        lambda: asyncio.Protocol(),
+                        host=candidate_ip,
+                        port=443,
+                        ssl=context,
+                        server_hostname=host,
+                    ),
+                    timeout=settings.SSL_CHECK_TIMEOUT_SECONDS,
+                )
+                break
 
-        except ssl.SSLCertVerificationError as error:
+            except asyncio.TimeoutError:
+                connect_errors.append(f"{candidate_ip}: timed out")
 
-            return IntegrationResult(
-                source=self.source_name,
-                status=ModuleResultStatus.SUCCESS,
-                data={
-                    "host": host,
-                    "certificate_valid": False,
-                    "verification_error": str(error),
-                },
-            )
+            except ssl.SSLCertVerificationError as error:
 
-        except (OSError, ssl.SSLError) as error:
+                return IntegrationResult(
+                    source=self.source_name,
+                    status=ModuleResultStatus.SUCCESS,
+                    data={
+                        "host": host,
+                        "certificate_valid": False,
+                        "verification_error": str(error),
+                    },
+                )
+
+            except (OSError, ssl.SSLError) as error:
+                connect_errors.append(f"{candidate_ip}: {error}")
+
+        if transport is None:
 
             return IntegrationResult(
                 source=self.source_name,
                 status=ModuleResultStatus.FAILED,
-                error_message=f"Could not establish TLS connection to '{host}': {error}",
+                error_message=(
+                    f"Could not establish TLS connection to '{host}' "
+                    f"via any resolved address: {'; '.join(connect_errors)}"
+                ),
             )
 
         try:

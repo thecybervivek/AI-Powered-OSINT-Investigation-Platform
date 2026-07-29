@@ -3,6 +3,13 @@ from datetime import timezone
 
 from sqlalchemy.orm import Session
 
+from backend.app.core.intelligence.correlation import correlate
+from backend.app.core.intelligence.evidence import Evidence
+from backend.app.core.intelligence.evidence import EvidenceState
+from backend.app.core.intelligence.evidence import EvidenceType
+from backend.app.core.intelligence.investigation_registry import get_definition
+from backend.app.core.intelligence.recommendations import build_recommendations
+from backend.app.core.intelligence.scoring import assess
 from backend.app.models.investigation import Investigation
 from backend.app.models.investigation import InvestigationResult
 from backend.app.models.investigation import InvestigationStatus
@@ -10,9 +17,26 @@ from backend.app.models.investigation import InvestigationType
 from backend.app.models.investigation import ModuleResultStatus
 from backend.app.repositories.investigation_repository import InvestigationRepository
 from backend.app.utils.evidence_correlation import InvestigationRef
-from backend.app.utils.evidence_correlation import find_shared_indicators
 from backend.app.utils.risk_scoring import clamp
 from backend.app.utils.risk_scoring import risk_level_from_score
+
+# Coarse mapping from an investigation's registry category to the
+# EvidenceType bucket the 4D scoring engine (scoring.py) uses to keep
+# Security Risk and Digital Exposure separate - see
+# backend/app/core/intelligence/scoring.py's _SECURITY_RISK_TYPES /
+# _EXPOSURE_TYPES. "threat"/"file" investigations feed Security Risk;
+# "identity"/"infrastructure" feed Exposure. This is a coarse, module-
+# level approximation (a real per-finding EvidenceType would need each
+# module to emit Evidence directly - see "remaining work" in the
+# delivery summary) but is strictly better than folding every
+# investigation type into one undifferentiated risk_score average.
+_CATEGORY_TO_EVIDENCE_TYPE = {
+    "threat": EvidenceType.SECURITY_MALICIOUS,
+    "file": EvidenceType.SECURITY_SUSPICIOUS,
+    "identity": EvidenceType.PUBLIC_PRESENCE,
+    "infrastructure": EvidenceType.INFRASTRUCTURE_FACT,
+    "risk": EvidenceType.REPUTATION_SIGNAL,
+}
 
 # How much an included investigation's own risk_score counts toward the
 # composite, based on how completely it ran. A FAILED investigation's
@@ -73,7 +97,7 @@ class CompositeRiskService:
 
         composite_score, confidence_score = self._compute_composite_score(included)
 
-        evidence = find_shared_indicators(
+        typed_correlations = correlate(
             [
                 InvestigationRef(
                     investigation_id=inv.id,
@@ -82,6 +106,16 @@ class CompositeRiskService:
                 )
                 for inv in included
             ]
+        )
+
+        four_d_evidence = self._build_evidence_from_investigations(included)
+        expected_provider_labels = [
+            inv.investigation_type.value for inv in included
+        ] + [f"unavailable:{mid}" for mid in missing_ids]
+
+        four_d_assessment = assess(four_d_evidence, expected_provider_labels)
+        recommendations = build_recommendations(
+            four_d_evidence, four_d_assessment.coverage_gaps,
         )
 
         analysis_data = {
@@ -99,10 +133,20 @@ class CompositeRiskService:
                 for inv in included
             ],
             "missing_or_not_owned_ids": missing_ids,
+            # Legacy fields - kept unchanged so anything already reading
+            # these (e.g. Investigation.risk_score/.risk_level below,
+            # or earlier API consumers) continues to work exactly as
+            # before this delivery.
             "composite_risk_score": composite_score,
             "composite_risk_level": risk_level_from_score(composite_score).value,
             "confidence_score": confidence_score,
-            "evidence_correlation": evidence,
+            "evidence_correlation": [c.to_dict() for c in typed_correlations],
+            # New: the 4-dimensional assessment (Security Risk / Digital
+            # Exposure / Confidence / Coverage) this delivery introduces -
+            # see backend/app/core/intelligence/scoring.py. Presented
+            # alongside, not instead of, the legacy fields above.
+            "four_dimensional_assessment": four_d_assessment.to_dict(),
+            "recommendations": [r.to_dict() for r in recommendations],
         }
 
         self.repository.add_result(
@@ -139,7 +183,64 @@ class CompositeRiskService:
         )
 
     # ------------------------------------------------------
+    # 4D Assessment evidence construction (new)
+    # ------------------------------------------------------
+
+    def _build_evidence_from_investigations(
+        self,
+        included: list[Investigation],
+    ) -> list[Evidence]:
+        """
+        Adapts each included Investigation's own already-computed
+        risk_score into one Evidence object for the shared scoring
+        engine (scoring.py). This is a coarse, module-level adaptation
+        (one Evidence per investigation, not per underlying finding) -
+        see the module-level comment on _CATEGORY_TO_EVIDENCE_TYPE for
+        why, and "remaining work" in the delivery summary for the
+        fuller per-finding integration path.
+        """
+
+        evidence_list: list[Evidence] = []
+
+        for inv in included:
+
+            definition = get_definition(inv.investigation_type.value)
+            category = definition.category if definition else "risk"
+            evidence_type = _CATEGORY_TO_EVIDENCE_TYPE.get(category, EvidenceType.REPUTATION_SIGNAL)
+
+            if inv.status == InvestigationStatus.COMPLETED and inv.risk_score is not None:
+                state = EvidenceState.SUCCESS
+                confidence = 90.0
+            elif inv.status == InvestigationStatus.PARTIAL and inv.risk_score is not None:
+                state = EvidenceState.SUCCESS
+                confidence = 60.0
+            elif inv.status == InvestigationStatus.FAILED:
+                state = EvidenceState.FAILED
+                confidence = 0.0
+            else:
+                state = EvidenceState.NOT_PERFORMED
+                confidence = 0.0
+
+            evidence_list.append(
+                Evidence(
+                    indicator=inv.target,
+                    investigation_id=inv.id,
+                    provider=inv.investigation_type.value,
+                    evidence_type=evidence_type,
+                    state=state,
+                    severity=inv.risk_score or 0.0,
+                    confidence=confidence,
+                    source_reliability=0.8,
+                    freshness=1.0,
+                    summary=inv.summary or f"{inv.investigation_type.value} investigation",
+                )
+            )
+
+        return evidence_list
+
+    # ------------------------------------------------------
     # Composite Risk Score / Composite Risk Level / Confidence Score
+    # (legacy - kept for backward compatibility, see analysis_data above)
     # ------------------------------------------------------
 
     def _compute_composite_score(
