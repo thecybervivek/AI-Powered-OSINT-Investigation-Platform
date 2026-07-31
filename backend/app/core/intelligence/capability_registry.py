@@ -31,6 +31,15 @@ class CapabilityStatus:
     is_production_ready: bool
     discrepancy_warnings: list[str]
 
+    # Phase 1B: the explicit available/unavailable/experimental/
+    # coming_soon contract (see investigation_registry.Availability),
+    # plus the input_mode a client needs to pick a UI control - both
+    # sourced directly from the registry's derived properties so this
+    # endpoint never needs its own copy of that logic.
+    availability: str = "unavailable"
+    unavailable_reason: str | None = None
+    input_mode: str = "text"
+
     def to_dict(self) -> dict:
 
         return {
@@ -44,6 +53,9 @@ class CapabilityStatus:
             "provider_state": self.provider_state,
             "is_production_ready": self.is_production_ready,
             "discrepancy_warnings": self.discrepancy_warnings,
+            "availability": self.availability,
+            "unavailable_reason": self.unavailable_reason,
+            "input_mode": self.input_mode,
         }
 
 
@@ -68,6 +80,12 @@ def _detect_discrepancies(definition) -> list[str]:
     if definition.production_status == "production" and definition.provider_state == "none":
         warnings.append(
             "production_status='production' but provider_state='none' (no providers configured)"
+        )
+
+    if definition.production_status in ("production", "beta") and definition.router_prefix is None:
+        warnings.append(
+            f"production_status='{definition.production_status}' but router_prefix is None "
+            "(no backend route is actually mounted for this type)"
         )
 
     return warnings
@@ -100,6 +118,9 @@ def capability_report() -> list[CapabilityStatus]:
                 provider_state=definition.provider_state,
                 is_production_ready=is_production_ready,
                 discrepancy_warnings=warnings,
+                availability=definition.availability.value,
+                unavailable_reason=definition.unavailable_reason,
+                input_mode=definition.input_mode,
             )
         )
 

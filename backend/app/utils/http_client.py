@@ -26,6 +26,10 @@ def resolve_public_addresses(
     host = hostname.rstrip(".").lower()
 
     if host in _BLOCKED_HOSTNAMES or host.endswith(".localhost"):
+        logger.warning(
+            "Outbound request blocked: hostname on blocklist.",
+            extra={"event": "ssrf_policy_rejected", "target_host": host},
+        )
         raise ValueError("Blocked destination hostname.")
 
     try:
@@ -66,6 +70,15 @@ def resolve_public_addresses(
             or addr.is_reserved
             or addr.is_unspecified
         ):
+            logger.warning(
+                "Outbound request blocked: destination resolves to a "
+                "non-public address.",
+                extra={
+                    "event": "ssrf_policy_rejected",
+                    "target_host": host,
+                    "resolved_address": str(addr),
+                },
+            )
             raise ValueError(
                 "Destination resolves to a non-public address."
             )

@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import ClassVar
 
 from pydantic import Field
 from pydantic import model_validator
@@ -281,6 +282,55 @@ class Settings(BaseSettings):
             if self.RATE_LIMIT_BACKEND == "memory":
                 raise ValueError("Production rate limiting must use a shared backend such as Redis.")
         return self
+
+    # ------------------------------------------------------
+    # Secret redaction for repr/str/logging
+    # ------------------------------------------------------
+    #
+    # Settings objects get logged, printed in tracebacks, and captured
+    # by error-reporting tools far more often than anyone intends. This
+    # covers every CURRENT and FUTURE secret-bearing field by NAME
+    # PATTERN (not an explicit per-field allowlist), since this project
+    # adds new provider API keys frequently and a per-field approach
+    # would silently stop protecting a key the day someone forgets to
+    # add it to a list.
+    _SENSITIVE_NAME_MARKERS: ClassVar[tuple[str, ...]] = (
+        "SECRET",
+        "API_KEY",
+        "APIKEY",
+        "PASSWORD",
+        "TOKEN",
+        "AUTH_KEY",
+        "PRIVATE_KEY",
+    )
+
+    # Fields that don't match the name patterns above but still embed
+    # credentials in their value (e.g. a connection string).
+    _SENSITIVE_FIELD_NAMES: ClassVar[frozenset[str]] = frozenset({"DATABASE_URL"})
+
+    @classmethod
+    def _is_sensitive_field(cls, field_name: str) -> bool:
+
+        if field_name in cls._SENSITIVE_FIELD_NAMES:
+            return True
+
+        upper_name = field_name.upper()
+
+        return any(marker in upper_name for marker in cls._SENSITIVE_NAME_MARKERS)
+
+    def __repr_args__(self):
+        """
+        Pydantic v2's hook for both __repr__ and __str__ output - every
+        field goes through this, so redacting here covers both without
+        duplicating logic.
+        """
+
+        for field_name, value in super().__repr_args__():
+
+            if value and self._is_sensitive_field(field_name):
+                yield field_name, "**REDACTED**"
+            else:
+                yield field_name, value
 
 
 @lru_cache

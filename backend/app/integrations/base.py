@@ -10,6 +10,7 @@ import httpx
 
 from backend.app.integrations.exceptions import IntegrationTimeoutError
 from backend.app.models.investigation import ModuleResultStatus
+from backend.app.utils.redaction import redact_secrets
 
 logger = logging.getLogger("app.integrations")
 
@@ -72,6 +73,8 @@ class AsyncBaseIntegration(ABC):
 
         except IntegrationTimeoutError as error:
 
+            safe_message = redact_secrets(str(error))
+
             logger.warning(
                 "Async integration timed out.",
                 extra={"event": f"{self.source_name}_timeout"},
@@ -81,14 +84,16 @@ class AsyncBaseIntegration(ABC):
                 source=self.source_name,
                 status=ModuleResultStatus.FAILED,
                 latency_ms=round((time.perf_counter() - start) * 1000),
-                error_message=str(error),
+                error_message=safe_message,
             )
 
         except Exception as error:
 
+            safe_message = redact_secrets(str(error))
+
             logger.warning(
                 "Async integration call failed: %s",
-                error,
+                safe_message,
                 extra={"event": f"{self.source_name}_error"},
             )
 
@@ -96,7 +101,7 @@ class AsyncBaseIntegration(ABC):
                 source=self.source_name,
                 status=ModuleResultStatus.FAILED,
                 latency_ms=round((time.perf_counter() - start) * 1000),
-                error_message=str(error),
+                error_message=safe_message,
             )
 
 

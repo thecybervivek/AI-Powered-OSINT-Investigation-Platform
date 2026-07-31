@@ -1,16 +1,19 @@
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { FileText, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { Loader2 } from "lucide-react";
+
 import { useInvestigation } from "@/hooks/useInvestigations";
 import { useGenerateReport } from "@/hooks/useReports";
 import { useToast } from "@/contexts/ToastContext";
 import { Card } from "@/components/Card";
-import { Button } from "@/components/Button";
-import { RiskBadge, StatusBadge } from "@/components/Badge";
+import { RiskBadge } from "@/components/Badge";
 import { CardSkeleton } from "@/components/LoadingSkeleton";
 import { ErrorState } from "@/components/StateViews";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
-import { formatDate, formatRiskScore } from "@/utils/formatters";
+import { formatRiskScore } from "@/utils/formatters";
+
+import { InvestigationHeader } from "@/components/investigation-result/InvestigationHeader";
+import { IntelligenceSection } from "@/components/investigation-result/IntelligenceSection";
+import { EvidenceList } from "@/components/investigation-result/EvidenceList";
 
 export function InvestigationDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -18,7 +21,6 @@ export function InvestigationDetailPage() {
   const { showToast } = useToast();
   const { data: investigation, isLoading, isError, refetch } = useInvestigation(id);
   const generateReport = useGenerateReport();
-  const [expandedResult, setExpandedResult] = useState<string | null>(null);
 
   async function handleGenerateReport() {
     if (!investigation) return;
@@ -47,6 +49,10 @@ export function InvestigationDetailPage() {
     return <ErrorState onRetry={() => refetch()} />;
   }
 
+  const hasDedicatedIntelligence =
+    investigation.investigation_type === "reverse_image" ||
+    investigation.investigation_type === "file";
+
   return (
     <div className="space-y-6">
       <Breadcrumbs
@@ -57,32 +63,22 @@ export function InvestigationDetailPage() {
         ]}
       />
 
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="break-all text-2xl font-semibold text-slate-900 dark:text-white">
-            {investigation.target}
-          </h1>
-          <p className="mt-1 text-sm capitalize text-slate-500 dark:text-slate-400">
-            {investigation.investigation_type.replace("_", " ")} investigation ·
-            Started {formatDate(investigation.started_at)}
-          </p>
-        </div>
-        <Button
-          onClick={handleGenerateReport}
-          isLoading={generateReport.isPending}
-        >
-          <FileText className="h-4 w-4" />
-          Generate Report
-        </Button>
-      </div>
+      <InvestigationHeader
+        investigation={investigation}
+        onGenerateReport={handleGenerateReport}
+        isGeneratingReport={generateReport.isPending}
+      />
 
-      <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
-        <Card>
-          <p className="text-sm text-slate-500 dark:text-slate-400">Status</p>
-          <div className="mt-2">
-            <StatusBadge status={investigation.status} />
-          </div>
-        </Card>
+      {/*
+        Pre-Account-2 placeholder. This becomes AssessmentDimensions
+        (Security Risk / Digital Exposure / Confidence / Coverage)
+        once Account 2's evidence architecture is integrated - see
+        ACCOUNT3_PARTC_DESIGN.md section 8. risk_score/risk_level are
+        real existing backend fields, not fabricated; they are simply
+        the values Account 2's work will supersede, not values Part C1
+        invented.
+      */}
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
         <Card>
           <p className="text-sm text-slate-500 dark:text-slate-400">Risk Level</p>
           <div className="mt-2">
@@ -108,55 +104,12 @@ export function InvestigationDetailPage() {
         </Card>
       )}
 
-      <div>
-        <h2 className="mb-3 font-semibold text-slate-900 dark:text-white">
-          Evidence ({investigation.results.length} source
-          {investigation.results.length === 1 ? "" : "s"})
-        </h2>
+      <IntelligenceSection investigation={investigation} />
 
-        {investigation.results.length === 0 ? (
-          <Card>
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              No evidence sources recorded for this investigation.
-            </p>
-          </Card>
-        ) : (
-          <div className="space-y-3">
-            {investigation.results.map((result) => (
-              <Card key={result.id}>
-                <button
-                  onClick={() =>
-                    setExpandedResult(
-                      expandedResult === result.id ? null : result.id
-                    )
-                  }
-                  className="flex w-full items-center justify-between text-left"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="font-medium capitalize text-slate-900 dark:text-white">
-                      {result.source.replace(/_/g, " ")}
-                    </span>
-                    <StatusBadge status={result.status} />
-                  </div>
-                  {result.latency_ms !== null && (
-                    <span className="text-xs text-slate-400">
-                      {result.latency_ms}ms
-                    </span>
-                  )}
-                </button>
-
-                {expandedResult === result.id && (
-                  <pre className="mt-3 max-h-80 overflow-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-300">
-                    {result.error_message
-                      ? result.error_message
-                      : JSON.stringify(result.data, null, 2)}
-                  </pre>
-                )}
-              </Card>
-            ))}
-          </div>
-        )}
-      </div>
+      <EvidenceList
+        results={investigation.results}
+        title={hasDedicatedIntelligence ? "All Evidence Sources" : "Evidence"}
+      />
 
       {generateReport.isPending && (
         <div className="flex items-center gap-2 text-sm text-slate-500">
@@ -165,7 +118,10 @@ export function InvestigationDetailPage() {
         </div>
       )}
 
-      <Link to="/investigations" className="inline-block text-sm text-brand-600 hover:underline">
+      <Link
+        to="/investigations"
+        className="inline-block text-sm text-brand-600 hover:underline"
+      >
         ← Back to Investigations
       </Link>
     </div>

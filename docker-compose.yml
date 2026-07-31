@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_DB: osint
       POSTGRES_USER: osint
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set - see .env.example. Do not run production with a default password.}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -12,6 +12,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
@@ -23,6 +24,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   migrate:
     build: .
@@ -34,7 +36,7 @@ services:
       REFRESH_COOKIE_SECURE: "true"
       RATE_LIMIT_BACKEND: redis
       REDIS_HOST: redis
-      DATABASE_URL: postgresql+psycopg://osint:${POSTGRES_PASSWORD:-change-me}@db:5432/osint
+      DATABASE_URL: postgresql+psycopg://osint:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@db:5432/osint
     depends_on:
       db:
         condition: service_healthy
@@ -51,7 +53,7 @@ services:
       REFRESH_COOKIE_SECURE: "true"
       RATE_LIMIT_BACKEND: redis
       REDIS_HOST: redis
-      DATABASE_URL: postgresql+psycopg://osint:${POSTGRES_PASSWORD:-change-me}@db:5432/osint
+      DATABASE_URL: postgresql+psycopg://osint:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@db:5432/osint
       ENABLE_API_DOCS: "false"
       TRUSTED_HOSTS: '${TRUSTED_HOSTS:-["localhost","127.0.0.1"]}'
     depends_on:
@@ -73,7 +75,7 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "8080:80"
+      - "8080:8080"
     restart: unless-stopped
 
 volumes:

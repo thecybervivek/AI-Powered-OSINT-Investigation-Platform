@@ -14,6 +14,8 @@ from backend.app.core.logging_config import configure_logging
 from backend.app.core.rate_limit import limiter
 from backend.app.core.redis_health import redis_health
 from backend.app.core.redis_health import redis_is_required
+from backend.app.core.startup_checks import StartupDependencyError
+from backend.app.core.startup_checks import verify_startup_dependencies
 from backend.app.db.database import database_health
 from backend.app.middleware.logging_middleware import RequestLoggingMiddleware
 from backend.app.middleware.security_headers import SecurityHeadersMiddleware
@@ -28,6 +30,20 @@ async def lifespan(app: FastAPI):
     print(f"Environment : {settings.ENVIRONMENT}")
     print(f"Version     : {settings.APP_VERSION}")
     print("=" * 60)
+
+    try:
+        verify_startup_dependencies()
+
+    except StartupDependencyError as error:
+        # Fail fast and loud: a clear, actionable message on stdout/
+        # stderr (visible in `docker logs` even before any log
+        # aggregation is wired up) plus the structured logger, then
+        # stop the process rather than accept traffic it can't serve.
+        print("=" * 60)
+        print("STARTUP ABORTED - a required dependency check failed:")
+        print(str(error))
+        print("=" * 60)
+        raise
 
     # Database schema is managed by Alembic migrations.
     # Do NOT call Base.metadata.create_all() in production.

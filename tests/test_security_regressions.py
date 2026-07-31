@@ -193,3 +193,50 @@ async def test_dns_rebinding_is_closed_by_ip_pinning(monkeypatch):
     # literal, never to the raw hostname (which is the only thing a
     # rebinding DNS server controls).
     assert connected_hosts == ["93.184.216.34"]
+
+
+# ==========================================================
+# Phase 0B: production-integration-level (not just utility-level)
+# redirect-bypass regression.
+#
+# The tests above prove request_with_retry() itself is safe. This one
+# proves a REAL integration (TechnologyDetectionIntegration) that
+# fetches a live, user-controlled target actually rejects a
+# redirect-to-private-IP end to end through its real _query() method -
+# including that no response content is ever leaked into the
+# IntegrationResult when this happens.
+# ==========================================================
+
+@pytest.mark.anyio
+async def test_technology_integration_rejects_redirect_to_private_target(monkeypatch):
+
+    import backend.app.integrations.domain.technology_integration as tech_module
+
+    call_count = 0
+
+    class _RedirectToPrivateTransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request):
+            nonlocal call_count
+            call_count += 1
+            return httpx.Response(
+                302,
+                headers={"location": "http://169.254.169.254/latest/meta-data/iam/security-credentials/"},
+                request=request,
+            )
+
+    real_async_client = httpx.AsyncClient
+
+    def _patched_client(*args, **kwargs):
+        kwargs["transport"] = _RedirectToPrivateTransport()
+        return real_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(tech_module.httpx, "AsyncClient", _patched_client)
+
+    result = await tech_module.TechnologyDetectionIntegration()._query("example.com")
+
+    assert result.status == ModuleResultStatus.FAILED
+    assert result.data in (None, {})
+    # The redirect target (and anything it might have returned) must
+    # never surface in the result - only a generic failure reason.
+    assert "169.254.169.254" not in (result.error_message or "")
+    assert call_count == 1  # only the initial legitimate hop was ever requested
