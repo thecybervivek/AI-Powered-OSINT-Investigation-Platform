@@ -8,14 +8,15 @@ from backend.app.integrations.base import IntegrationResult
 from backend.app.integrations.exceptions import IntegrationTimeoutError
 from backend.app.models.investigation import ModuleResultStatus
 
-_RECORD_TYPES = ("A", "AAAA", "MX", "TXT", "NS")
+_RECORD_TYPES = ("A", "AAAA", "MX", "TXT", "NS", "CNAME", "SOA", "CAA")
 
 
 class DNSLookupIntegration(AsyncBaseIntegration):
     """
-    Resolves A, AAAA, MX, TXT, and NS records for a domain. Each record
-    type is queried independently so a missing record type (e.g. no
-    AAAA) doesn't fail the whole lookup — it's simply reported empty.
+    Resolves A, AAAA, MX, TXT, NS, CNAME, SOA, and CAA records for a
+    domain. Each record type is queried independently so a missing
+    record type (e.g. no AAAA, no CAA) doesn't fail the whole lookup —
+    it's simply reported empty.
     """
 
     source_name = "dns_lookup"

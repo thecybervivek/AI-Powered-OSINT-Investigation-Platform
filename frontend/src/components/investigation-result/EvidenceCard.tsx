@@ -12,6 +12,19 @@ interface EvidenceCardProps {
   defaultExpanded?: boolean;
 }
 
+/**
+ * Some sources encode which resolved IP they ran against directly in
+ * the source name (e.g. "asn_lookup:93.184.216.34" from the Domain
+ * Investigation pipeline, which fans IP-dependent lookups out across
+ * every resolved public IP). Split that out into a readable label
+ * rather than showing the raw colon-joined string.
+ */
+function formatSourceName(source: string): string {
+  const [base, suffix] = source.split(":");
+  const label = base.replace(/_/g, " ");
+  return suffix ? `${label} (${suffix})` : label;
+}
+
 export function EvidenceCard({ result, defaultExpanded = false }: EvidenceCardProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const meta = getEvidenceStatusMeta(result.status);
@@ -36,7 +49,7 @@ export function EvidenceCard({ result, defaultExpanded = false }: EvidenceCardPr
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-medium capitalize text-slate-900 dark:text-white">
-                {result.source.replace(/_/g, " ")}
+                {formatSourceName(result.source)}
               </span>
               <span
                 className={clsx(

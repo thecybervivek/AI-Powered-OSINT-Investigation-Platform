@@ -1,11 +1,65 @@
 import asyncio
 import re
+from datetime import datetime
+from datetime import timezone
 
 from backend.app.core.config import settings
 from backend.app.integrations.base import AsyncBaseIntegration
 from backend.app.integrations.base import IntegrationResult
 from backend.app.integrations.exceptions import IntegrationTimeoutError
 from backend.app.models.investigation import ModuleResultStatus
+
+# WHOIS registries format dates inconsistently; these cover the vast
+# majority seen in practice (ISO-8601 with/without a 'Z', and the
+# older free-text "05-jan-2020" style some ccTLD registries still use).
+# Never raises - callers get None back for anything that doesn't match
+# rather than the whole lookup failing over a date-format quirk.
+_WHOIS_DATE_FORMATS = (
+    "%Y-%m-%dT%H:%M:%SZ",
+    "%Y-%m-%dT%H:%M:%S.%fZ",
+    "%Y-%m-%dT%H:%M:%S%z",
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d",
+    "%d-%b-%Y",
+    "%d-%m-%Y",
+)
+
+
+def _parse_whois_date(raw: str | None) -> datetime | None:
+
+    if not raw:
+        return None
+
+    cleaned = raw.strip()
+
+    for fmt in _WHOIS_DATE_FORMATS:
+
+        try:
+            parsed = datetime.strptime(cleaned, fmt)
+
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+
+            return parsed
+
+        except ValueError:
+            continue
+
+    return None
+
+
+def _domain_age_days(creation_date_raw: str | None) -> int | None:
+
+    parsed = _parse_whois_date(creation_date_raw)
+
+    if parsed is None:
+        return None
+
+    age = (datetime.now(timezone.utc) - parsed).days
+
+    # A "future" creation date means either a parsing mismatch or a
+    # clock-skewed WHOIS server - either way, an age isn't meaningful.
+    return age if age >= 0 else None
 
 _WHOIS_PORT = 43
 _IANA_WHOIS_HOST = "whois.iana.org"
@@ -19,6 +73,16 @@ _FIELD_PATTERNS = {
     "updated_date": re.compile(r"(?im)^\s*(?:Updated Date|last-updated|changed):\s*(.+)$"),
     "domain_status": re.compile(r"(?im)^\s*Domain Status:\s*(.+)$"),
 }
+
+# A real WHOIS/RDAP record commonly lists several Domain Status values
+# (e.g. clientTransferProhibited AND clientUpdateProhibited on the same
+# domain). The original `domain_status` field above only ever captured
+# the first match - kept as-is for backward compatibility with any
+# existing caller - this additional pattern collects all of them into
+# a new `domain_statuses` list field instead of replacing it.
+_ALL_DOMAIN_STATUS_PATTERN = re.compile(r"(?im)^\s*Domain Status:\s*(\S+)")
+
+_DNSSEC_PATTERN = re.compile(r"(?im)^\s*DNSSEC:\s*(.+)$")
 
 _NAME_SERVER_PATTERN = re.compile(r"(?im)^\s*Name Server:\s*(\S+)$")
 
@@ -135,11 +199,23 @@ class WHOISIntegration(AsyncBaseIntegration):
             {match.group(1).rstrip(".").lower() for match in _NAME_SERVER_PATTERN.finditer(raw_record)}
         )
 
+        # Additive fields - none of these replace or rename an
+        # existing key above.
+        domain_statuses = sorted(
+            {match.group(1).strip() for match in _ALL_DOMAIN_STATUS_PATTERN.finditer(raw_record)}
+        )
+
+        dnssec_match = _DNSSEC_PATTERN.search(raw_record)
+        dnssec = dnssec_match.group(1).strip() if dnssec_match else None
+
         data = {
             "domain": domain,
             "whois_server": whois_server,
             "registered": True,
             "name_servers": name_servers,
+            "domain_statuses": domain_statuses,
+            "dnssec": dnssec,
+            "domain_age_days": _domain_age_days(fields.get("creation_date")),
             **fields,
         }
 
