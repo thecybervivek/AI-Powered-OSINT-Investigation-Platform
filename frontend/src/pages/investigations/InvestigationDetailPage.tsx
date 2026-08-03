@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { Loader2 } from "lucide-react";
+import { Loader2, ChevronDown, ChevronRight } from "lucide-react";
 
 import { useInvestigation } from "@/hooks/useInvestigations";
 import { useGenerateReport } from "@/hooks/useReports";
@@ -21,6 +22,7 @@ export function InvestigationDetailPage() {
   const { showToast } = useToast();
   const { data: investigation, isLoading, isError, refetch } = useInvestigation(id);
   const generateReport = useGenerateReport();
+  const [showRawEvidence, setShowRawEvidence] = useState(false);
 
   async function handleGenerateReport() {
     if (!investigation) return;
@@ -51,7 +53,23 @@ export function InvestigationDetailPage() {
 
   const hasDedicatedIntelligence =
     investigation.investigation_type === "reverse_image" ||
-    investigation.investigation_type === "file";
+    investigation.investigation_type === "file" ||
+    investigation.investigation_type === "domain";
+
+  // Domain Investigation now has its own evidence-backed Assessment
+  // (see DomainIntelligence.tsx) - a numeric Risk Score/Level next to
+  // it would be exactly the misleading "passive OSINT can't assign a
+  // precise number" problem the assessment replaces. Other types keep
+  // the existing risk grid until they get the same treatment.
+  const isDomainInvestigation = investigation.investigation_type === "domain";
+
+  // Domain's grouped sections (DNS/Registration/TLS/Technology/
+  // Subdomains/IP Intelligence/Threat Intelligence) already summarize
+  // every real finding - showing the full per-provider evidence list
+  // underneath by default would mean "dozens of individual evidence
+  // cards" right back again. Nothing is removed - it's one click away
+  // - it's just not dumped on screen by default.
+  const shouldCollapseRawEvidence = isDomainInvestigation;
 
   return (
     <div className="space-y-6">
@@ -69,29 +87,29 @@ export function InvestigationDetailPage() {
         isGeneratingReport={generateReport.isPending}
       />
 
-      {/*
-        Pre-Account-2 placeholder. This becomes AssessmentDimensions
-        (Security Risk / Digital Exposure / Confidence / Coverage)
-        once Account 2's evidence architecture is integrated - see
-        ACCOUNT3_PARTC_DESIGN.md section 8. risk_score/risk_level are
-        real existing backend fields, not fabricated; they are simply
-        the values Account 2's work will supersede, not values Part C1
-        invented.
-      */}
-      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-        <Card>
-          <p className="text-sm text-slate-500 dark:text-slate-400">Risk Level</p>
-          <div className="mt-2">
-            <RiskBadge level={investigation.risk_level} />
-          </div>
-        </Card>
-        <Card>
-          <p className="text-sm text-slate-500 dark:text-slate-400">Risk Score</p>
-          <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">
-            {formatRiskScore(investigation.risk_score)}
-          </p>
-        </Card>
-      </div>
+      {!isDomainInvestigation && (
+        // Pre-Account-2 placeholder for every other type. This becomes
+        // AssessmentDimensions (Security Risk / Digital Exposure /
+        // Confidence / Coverage) once Account 2's evidence architecture
+        // is integrated - see ACCOUNT3_PARTC_DESIGN.md section 8.
+        // risk_score/risk_level are real existing backend fields, not
+        // fabricated; they are simply the values Account 2's work will
+        // supersede, not values Part C1 invented.
+        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+          <Card>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Risk Level</p>
+            <div className="mt-2">
+              <RiskBadge level={investigation.risk_level} />
+            </div>
+          </Card>
+          <Card>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Risk Score</p>
+            <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">
+              {formatRiskScore(investigation.risk_score)}
+            </p>
+          </Card>
+        </div>
+      )}
 
       {investigation.summary && (
         <Card>
@@ -106,10 +124,33 @@ export function InvestigationDetailPage() {
 
       <IntelligenceSection investigation={investigation} />
 
-      <EvidenceList
-        results={investigation.results}
-        title={hasDedicatedIntelligence ? "All Evidence Sources" : "Evidence"}
-      />
+      {shouldCollapseRawEvidence ? (
+        <div>
+          <button
+            type="button"
+            onClick={() => setShowRawEvidence((prev) => !prev)}
+            className="flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+          >
+            {showRawEvidence ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+            {showRawEvidence ? "Hide" : "Show"} raw evidence sources ({investigation.results.length})
+          </button>
+
+          {showRawEvidence && (
+            <div className="mt-3">
+              <EvidenceList results={investigation.results} title="All Evidence Sources" />
+            </div>
+          )}
+        </div>
+      ) : (
+        <EvidenceList
+          results={investigation.results}
+          title={hasDedicatedIntelligence ? "All Evidence Sources" : "Evidence"}
+        />
+      )}
 
       {generateReport.isPending && (
         <div className="flex items-center gap-2 text-sm text-slate-500">

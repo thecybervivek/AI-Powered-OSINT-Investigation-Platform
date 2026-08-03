@@ -328,7 +328,17 @@ class DomainIntelligenceService:
 
         overall_status = _overall_status(all_persisted)
 
-        summary = _build_summary(domain, assessment.data, risk_notes, public_ips)
+        summary = _build_summary(
+            assessment_data=assessment.data,
+            hygiene_notes=risk_notes,
+            public_ips=public_ips,
+            whois_data=domain_results_by_source.get("whois").data
+            if domain_results_by_source.get("whois")
+            else None,
+            ssl_data=domain_results_by_source.get("ssl_certificate").data
+            if domain_results_by_source.get("ssl_certificate")
+            else None,
+        )
 
         return self.repository.update(
             investigation,
@@ -587,18 +597,18 @@ def _build_threat_assessment(
 
     elif not providers_consulted and providers_failed:
         state = "inconclusive"
-        label = "Inconclusive"
+        label = "Insufficient evidence"
         reasoning.append(
             f"Provider(s) attempted but did not complete: {', '.join(providers_failed)}."
         )
 
     elif malicious_signal:
         state = "malicious"
-        label = "Malicious"
+        label = "Malicious indicators detected"
 
     elif suspicious_signal:
         state = "suspicious"
-        label = "Suspicious"
+        label = "Suspicious indicators detected"
 
     else:
         state = "no_malicious_evidence_detected"
@@ -690,25 +700,114 @@ def _overall_status(results: list[IntegrationResult]) -> InvestigationStatus:
 
 
 def _build_summary(
-    domain: str,
+    *,
     assessment_data: dict,
     hygiene_notes: list[str],
     public_ips: list[str],
+    whois_data: dict | None,
+    ssl_data: dict | None,
 ) -> str:
+    """
+    An analyst-style conclusion, not a single generic sentence: what
+    was found, what was checked, and what caveats apply - mirroring
+    how a human OSINT analyst would close out a report rather than a
+    scanner's one-line verdict.
+    """
 
+    state = assessment_data.get("state", "threat_assessment_incomplete")
     label = assessment_data.get("label", "Threat assessment incomplete")
 
-    parts = [f"{label} for '{domain}'."]
+    sentences = [f"{label}."]
 
     if public_ips:
-        parts.append(
-            f"Resolved to {len(public_ips)} public IP address"
+        sentences.append(
+            f"The domain resolves to {len(public_ips)} public IP address"
             f"{'es' if len(public_ips) != 1 else ''}."
         )
     else:
-        parts.append("No public IP address was resolved for this domain.")
+        sentences.append("No public IP address was resolved for this domain.")
+
+    if whois_data:
+
+        creation_date = whois_data.get("creation_date")
+        registered = whois_data.get("registered")
+
+        if registered is False:
+            sentences.append("The domain appears unregistered.")
+
+        elif creation_date:
+            year = _extract_year(creation_date)
+            sentences.append(
+                f"WHOIS registration dates back to {year}."
+                if year
+                else "WHOIS registration data is available."
+            )
+
+    if ssl_data:
+
+        if ssl_data.get("is_expired"):
+            sentences.append("The TLS certificate has expired.")
+
+        elif ssl_data.get("certificate_valid") is False:
+            sentences.append("The TLS certificate failed verification.")
+
+        elif ssl_data.get("certificate_valid"):
+            sentences.append("The TLS certificate is currently valid.")
 
     if hygiene_notes:
-        parts.append("Infrastructure hygiene notes: " + "; ".join(hygiene_notes) + ".")
+        sentences.append(
+            "Additional infrastructure hygiene notes: "
+            + "; ".join(hygiene_notes)
+            + "."
+        )
 
-    return " ".join(parts)
+    # Evidence-first closing line: what the assessment does and does
+    # not mean, tied to what was actually checked - never implying
+    # safety merely because nothing malicious turned up.
+    if state == "no_malicious_evidence_detected":
+        consulted = assessment_data.get("providers_consulted", [])
+        sentences.append(
+            "No malicious indicators were identified from the available "
+            "passive intelligence"
+            + (f" ({', '.join(consulted)})." if consulted else ".")
+        )
+
+    elif state == "threat_assessment_incomplete":
+        sentences.append(
+            "Threat intelligence providers were unavailable; therefore no "
+            "definitive security conclusion can be made."
+        )
+
+    elif state == "inconclusive":
+        failed = assessment_data.get("providers_failed", [])
+        sentences.append(
+            "Threat intelligence providers were attempted but did not "
+            "complete"
+            + (f" ({', '.join(failed)})" if failed else "")
+            + "; therefore no definitive security conclusion can be made."
+        )
+
+    elif state in ("malicious", "suspicious"):
+        reasoning = assessment_data.get("reasoning", [])
+        if reasoning:
+            sentences.append("Basis: " + "; ".join(reasoning) + ".")
+
+    return " ".join(sentences)
+
+
+def _extract_year(raw_date: str) -> str | None:
+    """Best-effort leading 4-digit year from a WHOIS date string, for a natural "dates back to 1997" phrasing rather than dumping a raw timestamp."""
+
+    stripped = raw_date.strip()
+
+    if len(stripped) >= 4 and stripped[:4].isdigit():
+        return stripped[:4]
+
+    # Some registries format dates as DD-Mon-YYYY.
+    parts = stripped.replace(".", "-").split("-")
+
+    for part in parts:
+        if len(part) == 4 and part.isdigit():
+            return part
+
+    return None

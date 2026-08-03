@@ -12,6 +12,7 @@ from backend.app.models.investigation import ModuleResultStatus
 from backend.app.services.domain_service import DomainIntelligenceService
 from backend.app.services.domain_service import _build_threat_assessment
 from backend.app.services.domain_service import _compute_hygiene_score
+from backend.app.services.domain_service import _build_summary
 from backend.app.services.domain_service import _is_ip_literal
 from backend.app.services.domain_service import _normalize_domain
 from backend.app.services.domain_service import _overall_status
@@ -448,7 +449,101 @@ def test_investigation_summary_does_not_present_bare_risk_score_as_conclusion(db
     assert "safe" not in investigation.summary.lower()
 
 
-def test_dns_not_found_is_reflected_in_legacy_hygiene_score_via_full_pipeline(db_session, test_user):
+def test_assessment_labels_match_exact_required_display_text():
+    """
+    Production polish requirement: exact display strings, while the
+    internal `state` keys (used by the frontend and by these same
+    tests elsewhere) stay stable.
+    """
+
+    malicious = _build_threat_assessment(
+        {
+            "shodan": None,
+            "censys": None,
+            "greynoise": IntegrationResult(
+                "greynoise",
+                ModuleResultStatus.SUCCESS,
+                data={"classification": "malicious", "is_internet_noise": True, "is_common_business_service": False},
+            ),
+            "otx": IntegrationResult("otx", ModuleResultStatus.SKIPPED),
+        }
+    )
+    assert malicious.data["label"] == "Malicious indicators detected"
+
+    suspicious = _build_threat_assessment(
+        {
+            "shodan": None,
+            "censys": None,
+            "greynoise": None,
+            "otx": IntegrationResult("otx", ModuleResultStatus.SUCCESS, data={"pulse_count": 1}),
+        }
+    )
+    assert suspicious.data["label"] == "Suspicious indicators detected"
+
+    insufficient = _build_threat_assessment(
+        {
+            "shodan": IntegrationResult("shodan", ModuleResultStatus.FAILED, error_message="x"),
+            "censys": IntegrationResult("censys", ModuleResultStatus.FAILED, error_message="x"),
+            "greynoise": IntegrationResult("greynoise", ModuleResultStatus.FAILED, error_message="x"),
+            "otx": IntegrationResult("otx", ModuleResultStatus.FAILED, error_message="x"),
+        }
+    )
+    assert insufficient.data["label"] == "Insufficient evidence"
+    assert insufficient.data["state"] == "inconclusive"  # internal key unchanged
+
+
+# ==========================================================
+# Analyst summary
+# ==========================================================
+
+
+def test_build_summary_matches_analyst_report_tone():
+
+    summary = _build_summary(
+        assessment_data={
+            "state": "threat_assessment_incomplete",
+            "label": "Threat assessment incomplete",
+            "providers_consulted": [],
+            "providers_unavailable": ["shodan", "censys", "greynoise", "otx"],
+            "providers_failed": [],
+            "reasoning": [],
+        },
+        hygiene_notes=[],
+        public_ips=["1.2.3.4"] * 10,
+        whois_data={"registered": True, "creation_date": "1997-09-15T04:00:00Z"},
+        ssl_data={"certificate_valid": True, "is_expired": False},
+    )
+
+    assert "Threat assessment incomplete." in summary
+    assert "resolves to 10 public IP addresses" in summary
+    assert "dates back to 1997" in summary
+    assert "TLS certificate is currently valid" in summary
+    assert "no definitive security conclusion can be made" in summary
+    assert "safe" not in summary.lower()
+
+
+def test_build_summary_no_malicious_evidence_never_says_safe():
+
+    summary = _build_summary(
+        assessment_data={
+            "state": "no_malicious_evidence_detected",
+            "label": "No malicious evidence detected",
+            "providers_consulted": ["shodan"],
+            "providers_unavailable": [],
+            "providers_failed": [],
+            "reasoning": [],
+        },
+        hygiene_notes=[],
+        public_ips=["1.2.3.4"],
+        whois_data=None,
+        ssl_data=None,
+    )
+
+    assert "safe" not in summary.lower()
+    assert "No malicious indicators were identified" in summary
+
+
+def test_hygiene_score_domain_does_not_resolve_affects_summary(db_session, test_user):
     """
     Regression guard: _compute_hygiene_score's 'domain does not
     resolve' check reads results by source name from a dict built in
@@ -473,11 +568,10 @@ def test_dns_not_found_is_reflected_in_legacy_hygiene_score_via_full_pipeline(db
         )
     )
 
-    assert investigation.risk_score is not None and investigation.risk_score > 0
     assert "does not resolve" in investigation.summary
 
 
-
+def test_dns_failure_prevents_ip_dependent_pipeline(db_session, test_user):
 
     service = DomainIntelligenceService(db_session)
     _patch_all_integrations(service, {"A": ["93.184.216.34"], "AAAA": []})
@@ -497,3 +591,45 @@ def test_dns_not_found_is_reflected_in_legacy_hygiene_score_via_full_pipeline(db
     # IP-dependent capabilities correctly have nothing to check, and
     # the DNS failure itself should be visible in the final status.
     assert investigation.status in (InvestigationStatus.PARTIAL, InvestigationStatus.FAILED)
+
+
+# ==========================================================
+# Technology fingerprint coverage (production polish)
+# ==========================================================
+#
+# The signature-matching loop in technology_integration.py is inline
+# inside an HTTP-calling method, not extracted into an isolated pure
+# function - these are golden-invariant checks (did the requested
+# technologies actually get added to the tables, not silently
+# mistyped) rather than full HTTP-mocked behavioral tests. See the
+# changelog for why full behavioral coverage is a follow-up item.
+
+
+def test_technology_signatures_cover_the_requested_stack():
+    from backend.app.integrations.domain.technology_integration import (
+        _BODY_SIGNATURES,
+        _HEADER_SIGNATURES,
+    )
+
+    all_technologies = {tech for _, tech in _BODY_SIGNATURES}
+    for signatures in _HEADER_SIGNATURES.values():
+        all_technologies.update(tech for _, tech in signatures)
+
+    for expected in [
+        "Nginx",
+        "Apache HTTP Server",
+        "Microsoft IIS",
+        "Cloudflare",
+        "Vercel",
+        "Netlify",
+        "WordPress",
+        "React",
+        "Next.js",
+        "Vue.js",
+        "Angular",
+        "Bootstrap",
+        "jQuery",
+        "Google Tag Manager",
+        "Amazon CloudFront",
+    ]:
+        assert expected in all_technologies, f"{expected} missing from signature tables"

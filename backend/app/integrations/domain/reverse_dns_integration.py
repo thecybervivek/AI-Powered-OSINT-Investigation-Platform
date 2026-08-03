@@ -52,7 +52,7 @@ class ReverseDNSIntegration(AsyncBaseIntegration):
             return IntegrationResult(
                 source=self.source_name,
                 status=ModuleResultStatus.NOT_FOUND,
-                data={"ip_address": str(ip), "hostnames": []},
+                data={"ip_address": str(ip), "hostnames": [], "summary": "No PTR record"},
             )
 
         except dns.resolver.NoAnswer:
@@ -60,7 +60,7 @@ class ReverseDNSIntegration(AsyncBaseIntegration):
             return IntegrationResult(
                 source=self.source_name,
                 status=ModuleResultStatus.NOT_FOUND,
-                data={"ip_address": str(ip), "hostnames": []},
+                data={"ip_address": str(ip), "hostnames": [], "summary": "No PTR record"},
             )
 
         except dns.exception.Timeout as error:
@@ -71,5 +71,9 @@ class ReverseDNSIntegration(AsyncBaseIntegration):
         return IntegrationResult(
             source=self.source_name,
             status=ModuleResultStatus.SUCCESS,
-            data={"ip_address": str(ip), "hostnames": hostnames},
+            data={
+                "ip_address": str(ip),
+                "hostnames": hostnames,
+                "summary": hostnames[0] if hostnames else "No PTR record",
+            },
         )

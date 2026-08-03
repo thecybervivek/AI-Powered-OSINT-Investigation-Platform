@@ -235,4 +235,92 @@ describe("InvestigationDetailPage", () => {
     expect(mutateAsync).toHaveBeenCalledWith({ investigationIds: ["inv-42"] });
     expect(await screen.findByText("Report Page")).toBeInTheDocument();
   });
+
+  // ==========================================================
+  // Domain Investigation production polish
+  // ==========================================================
+
+  it("does not show a numeric Risk Score or Risk Level for a domain investigation", () => {
+    renderPage(
+      makeInvestigation({
+        investigation_type: "domain",
+        target: "example.com",
+        risk_score: 0,
+        risk_level: "low",
+        results: [
+          makeResult({
+            id: "r1",
+            source: "threat_assessment",
+            status: "success",
+            data: {
+              state: "threat_assessment_incomplete",
+              label: "Threat assessment incomplete",
+              reasoning: [],
+              providers_consulted: [],
+              providers_unavailable: ["shodan", "censys", "greynoise", "otx"],
+              providers_failed: [],
+            },
+          }),
+        ],
+      })
+    );
+
+    expect(screen.queryByText("Risk Score")).not.toBeInTheDocument();
+    expect(screen.queryByText("Risk Level")).not.toBeInTheDocument();
+    expect(screen.queryByText("0.0/100")).not.toBeInTheDocument();
+    expect(screen.getByText("Threat assessment incomplete")).toBeInTheDocument();
+  });
+
+  it("still shows Risk Score/Level for non-domain investigation types (no regression)", () => {
+    renderPage(
+      makeInvestigation({
+        investigation_type: "username",
+        risk_score: 12.5,
+        risk_level: "low",
+      })
+    );
+
+    expect(screen.getByText("Risk Score")).toBeInTheDocument();
+    expect(screen.getByText("Risk Level")).toBeInTheDocument();
+  });
+
+  it("collapses the raw evidence list behind a toggle for domain investigations, without losing any of it", async () => {
+    const user = userEvent.setup();
+
+    renderPage(
+      makeInvestigation({
+        investigation_type: "domain",
+        target: "example.com",
+        results: [
+          makeResult({ id: "r1", source: "whois", status: "success", data: { registered: true } }),
+          makeResult({ id: "r2", source: "asn_lookup:1.2.3.4", status: "success" }),
+        ],
+      })
+    );
+
+    // Not shown by default - grouped sections cover the same ground.
+    expect(screen.queryByText("whois")).not.toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: /show raw evidence sources \(2\)/i });
+    expect(toggle).toBeInTheDocument();
+
+    await user.click(toggle);
+
+    expect(screen.getByText("whois")).toBeInTheDocument();
+    expect(screen.getByText(/asn lookup \(1\.2\.3\.4\)/i)).toBeInTheDocument();
+  });
+
+  it("does not collapse evidence for non-domain types with a dedicated renderer (no regression)", () => {
+    renderPage(
+      makeInvestigation({
+        investigation_type: "reverse_image",
+        target: "abc123sha256",
+        results: [makeResult({ id: "r1", source: "hash_analysis", status: "success" })],
+      })
+    );
+
+    expect(screen.getByText("hash analysis")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /show raw evidence sources/i })
+    ).not.toBeInTheDocument();
+  });
 });

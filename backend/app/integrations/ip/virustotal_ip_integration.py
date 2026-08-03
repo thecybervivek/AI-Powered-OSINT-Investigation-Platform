@@ -85,6 +85,7 @@ class VirusTotalIPIntegration(AsyncBaseIntegration):
             "tags": attributes.get("tags", []),
             "analysis_stats": stats,
             "flagged_vendors": flagged_vendors,
+            "summary": _format_virustotal_summary(stats),
         }
 
         return IntegrationResult(
@@ -92,3 +93,17 @@ class VirusTotalIPIntegration(AsyncBaseIntegration):
             status=ModuleResultStatus.SUCCESS,
             data=data,
         )
+
+
+def _format_virustotal_summary(stats: dict) -> str:
+
+    malicious = stats.get("malicious", 0)
+    suspicious = stats.get("suspicious", 0)
+
+    if malicious:
+        return f"{malicious} vendor(s) flagged this IP as malicious."
+
+    if suspicious:
+        return f"{suspicious} vendor(s) flagged this IP as suspicious."
+
+    return "No vendors flagged this IP as malicious or suspicious."

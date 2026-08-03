@@ -106,6 +106,9 @@ class AbuseIPDBIntegration(AsyncBaseIntegration):
             "num_distinct_reporters": payload.get("numDistinctUsers", 0),
             "last_reported_at": payload.get("lastReportedAt"),
             "reported_category_ids": sorted(recent_categories),
+            "summary": _format_abuseipdb_summary(
+                payload.get("abuseConfidenceScore", 0), payload.get("totalReports", 0),
+            ),
         }
 
         return IntegrationResult(
@@ -113,3 +116,11 @@ class AbuseIPDBIntegration(AsyncBaseIntegration):
             status=ModuleResultStatus.SUCCESS,
             data=data,
         )
+
+
+def _format_abuseipdb_summary(confidence_score: int, total_reports: int) -> str:
+
+    if not total_reports:
+        return "No abuse reports found."
+
+    return f"{confidence_score}% abuse confidence from {total_reports} community report(s)."

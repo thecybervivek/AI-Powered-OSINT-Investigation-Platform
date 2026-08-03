@@ -75,6 +75,9 @@ class IPGeolocationIntegration(AsyncBaseIntegration):
             "organization": payload.get("org"),
             "asn": payload.get("as"),
             "asn_name": payload.get("asname"),
+            "summary": _format_geolocation_summary(
+                payload.get("city"), payload.get("regionName"), payload.get("country"),
+            ),
         }
 
         return IntegrationResult(
@@ -82,3 +85,10 @@ class IPGeolocationIntegration(AsyncBaseIntegration):
             status=ModuleResultStatus.SUCCESS,
             data=data,
         )
+
+
+def _format_geolocation_summary(city: str | None, region: str | None, country: str | None) -> str:
+
+    parts = [p for p in (city, region, country) if p]
+
+    return ", ".join(parts) if parts else "Location could not be determined."

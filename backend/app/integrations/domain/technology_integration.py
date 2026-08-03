@@ -19,6 +19,10 @@ _HEADER_SIGNATURES: dict[str, list[tuple[str, str]]] = {
         ("cloudflare", "Cloudflare"),
         ("microsoft-iis", "Microsoft IIS"),
         ("litespeed", "LiteSpeed"),
+        ("vercel", "Vercel"),
+        ("netlify", "Netlify"),
+        ("cloudfront", "Amazon CloudFront"),
+        ("amazons3", "Amazon S3"),
     ],
     "x-powered-by": [
         ("php", "PHP"),
@@ -30,6 +34,15 @@ _HEADER_SIGNATURES: dict[str, list[tuple[str, str]]] = {
         ("wordpress", "WordPress"),
         ("drupal", "Drupal"),
     ],
+    "x-vercel-id": [
+        ("", "Vercel"),
+    ],
+    "x-nf-request-id": [
+        ("", "Netlify"),
+    ],
+    "via": [
+        ("cloudfront", "Amazon CloudFront"),
+    ],
 }
 
 _BODY_SIGNATURES: list[tuple[str, str]] = [
@@ -40,6 +53,13 @@ _BODY_SIGNATURES: list[tuple[str, str]] = [
     ("ng-version", "Angular"),
     ("wix.com", "Wix"),
     ("squarespace", "Squarespace"),
+    ("data-v-", "Vue.js"),
+    ("vue.min.js", "Vue.js"),
+    ("bootstrap.min.css", "Bootstrap"),
+    ("bootstrap.min.js", "Bootstrap"),
+    ("jquery.min.js", "jQuery"),
+    ("jquery-3", "jQuery"),
+    ("googletagmanager.com", "Google Tag Manager"),
 ]
 
 
@@ -76,6 +96,7 @@ class TechnologyDetectionIntegration(AsyncBaseIntegration):
 
         async with httpx.AsyncClient(
             timeout=settings.OSINT_REQUEST_TIMEOUT_SECONDS,
+            follow_redirects=True,
         ) as client:
 
             try:

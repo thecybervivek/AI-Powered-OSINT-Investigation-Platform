@@ -30,12 +30,11 @@ const RECORD_TYPE_ORDER = ["A", "AAAA", "CNAME", "MX", "NS", "TXT", "SOA", "CAA"
  *                                conclusion for this module
  */
 export function DomainIntelligence({ results }: DomainIntelligenceProps) {
-  console.log("DOMAIN RESULTS:", results);
   const dnsLookup = asRecord(findResult(results, "dns_lookup")?.data);
   const whois = asRecord(findResult(results, "whois")?.data);
   const ssl = asRecord(findResult(results, "ssl_certificate")?.data);
   const technology = asRecord(findResult(results, "technology_detection")?.data);
-  const ct = asRecord(findResult(results, "certificate_transparency")?.data);
+  const ctResult = findResult(results, "certificate_transparency");
   const subdomainSample = asRecord(findResult(results, "subdomain_resolution_sample")?.data);
   const ipSummary = asRecord(findResult(results, "ip_intelligence_summary")?.data);
   const dnsNotes = asRecord(findResult(results, "dns_resolution_notes")?.data);
@@ -53,13 +52,15 @@ export function DomainIntelligence({ results }: DomainIntelligenceProps) {
 
       {technology && <TechnologySection technology={technology} />}
 
-      {(ct || subdomainSample) && (
-        <SubdomainSection ct={ct} sample={subdomainSample} />
+      {(ctResult || subdomainSample) && (
+        <SubdomainSection ctResult={ctResult} sample={subdomainSample} />
       )}
 
       {(ipSummary || dnsNotes) && (
         <IpIntelligenceSection ipSummary={ipSummary} dnsNotes={dnsNotes} />
       )}
+
+      {assessment && <ThreatIntelligenceSection results={results} assessment={assessment} />}
     </div>
   );
 }
@@ -189,7 +190,7 @@ function DnsRecordsSection({ dnsLookup }: { dnsLookup: Record<string, unknown> }
 function WhoisSection({ whois }: { whois: Record<string, unknown> }) {
   if (asBoolean(whois.registered) === false) {
     return (
-      <Section title="Registration (WHOIS)">
+      <Section title="Registration">
         <p className="text-sm text-slate-500 dark:text-slate-400">
           No registration record found - this domain appears unregistered.
         </p>
@@ -204,15 +205,16 @@ function WhoisSection({ whois }: { whois: Record<string, unknown> }) {
     ? (whois.name_servers as unknown[]).map(String)
     : [];
   const ageDays = asNumber(whois.domain_age_days);
+  const created = asString(whois.creation_date);
+  const expires = asString(whois.expiration_date);
 
   return (
-    <Section title="Registration (WHOIS)">
+    <Section title="Registration">
       <FieldGrid
         fields={[
           ["Registrar", asString(whois.registrar) ?? "Not disclosed"],
-          ["Created", asString(whois.creation_date) ?? "—"],
-          ["Updated", asString(whois.updated_date) ?? "—"],
-          ["Expires", asString(whois.expiration_date) ?? "—"],
+          ["Registered", created ? (extractYear(created) ?? created) : "—"],
+          ["Expires", expires ? (extractYear(expires) ?? expires) : "—"],
           ["Domain age", ageDays !== null ? `${ageDays.toLocaleString()} days` : "—"],
           ["DNSSEC", asString(whois.dnssec) ?? "Not reported"],
         ]}
@@ -265,15 +267,26 @@ function TlsSection({ ssl }: { ssl: Record<string, unknown> }) {
   const sans = Array.isArray(ssl.subject_alt_names)
     ? (ssl.subject_alt_names as unknown[]).map(String)
     : [];
+  const issuerName = asString(issuer?.organizationName ?? issuer?.commonName);
+  const notAfter = asString(ssl.not_after);
 
   return (
     <Section title="TLS Certificate">
+      <p className="text-sm text-slate-700 dark:text-slate-300">
+        {asBoolean(ssl.is_expired)
+          ? `Expired ${notAfter ? formatMonthYear(notAfter) : ""}`
+          : notAfter
+          ? `Valid until ${formatMonthYear(notAfter)}`
+          : "Validity period unknown"}
+        {issuerName && `, issued by ${issuerName}`}.
+      </p>
+
       <FieldGrid
         fields={[
           ["Subject (CN)", asString(subject?.commonName) ?? "—"],
-          ["Issuer", asString(issuer?.organizationName ?? issuer?.commonName) ?? "—"],
+          ["Issuer", issuerName ?? "—"],
           ["Not before", asString(ssl.not_before) ? formatDate(asString(ssl.not_before)) : "—"],
-          ["Not after", asString(ssl.not_after) ? formatDate(asString(ssl.not_after)) : "—"],
+          ["Not after", notAfter ? formatDate(notAfter) : "—"],
           ["Expired", asBoolean(ssl.is_expired) ? "Yes" : "No"],
         ]}
       />
@@ -351,19 +364,26 @@ function TechnologySection({ technology }: { technology: Record<string, unknown>
 // ==========================================================
 
 function SubdomainSection({
-  ct,
+  ctResult,
   sample,
 }: {
-  ct: Record<string, unknown> | null;
+  ctResult: InvestigationResult | undefined;
   sample: Record<string, unknown> | null;
 }) {
+  const ct = asRecord(ctResult?.data);
   const subdomains = ct && Array.isArray(ct.subdomains) ? (ct.subdomains as unknown[]).map(String) : [];
   const resolved = sample && Array.isArray(sample.resolved) ? (sample.resolved as unknown[]).map(String) : [];
   const unresolved = sample && Array.isArray(sample.unresolved) ? (sample.unresolved as unknown[]).map(String) : [];
 
+  const ctUnavailable = ctResult?.status === "failed";
+
   return (
     <Section title="Subdomains">
-      {subdomains.length === 0 ? (
+      {ctUnavailable ? (
+        <p className="text-sm text-slate-500 dark:text-slate-400">
+          {ctResult?.error_message || "Certificate Transparency temporarily unavailable."}
+        </p>
+      ) : subdomains.length === 0 ? (
         <p className="text-sm text-slate-500 dark:text-slate-400">
           No subdomains discovered via Certificate Transparency logs. This is
           a passive source (crt.sh) - it does not imply exhaustive coverage.
@@ -434,19 +454,77 @@ function IpIntelligenceSection({
 }) {
   const ips = ipSummary && Array.isArray(ipSummary.ips) ? (ipSummary.ips as Record<string, unknown>[]) : [];
 
+  const rows = ips.map((entry) => {
+    const ip = asString(entry.ip_address) ?? "Unknown IP";
+    const asn = asRecord(entry.asn);
+    const geo = asRecord(entry.geolocation);
+    const rdns = asRecord(entry.reverse_dns);
+
+    const asnData = asn?.status === "success" ? asRecord(asn.data) : null;
+    const geoData = geo?.status === "success" ? asRecord(geo.data) : null;
+    const rdnsData = rdns?.status === "success" ? asRecord(rdns.data) : null;
+    const rdnsHostnames =
+      rdnsData && Array.isArray(rdnsData.hostnames) ? (rdnsData.hostnames as unknown[]).map(String) : [];
+
+    const isIpv6NotSupported = asn?.status === "skipped" && ip.includes(":");
+
+    return {
+      ip,
+      asn: asnData
+        ? `${asString(asnData.asn) ?? "?"} (${asString(asnData.asn_name) ?? "unknown org"})`
+        : isIpv6NotSupported
+        ? "Not supported"
+        : asn?.status === "skipped"
+        ? "Not applicable"
+        : "Not found",
+      country: geoData ? asString(geoData.country) ?? "Unknown" : "—",
+      reverseDns: rdnsHostnames.length > 0 ? rdnsHostnames.join(", ") : "None",
+      isIpv6NotSupported,
+    };
+  });
+
+  const anyIpv6Unsupported = rows.some((row) => row.isIpv6NotSupported);
+
   return (
     <Section title="IP Intelligence">
-      {ips.length === 0 ? (
+      {rows.length === 0 ? (
         <p className="text-sm text-slate-500 dark:text-slate-400">
           No public IP address was resolved for this domain, so ASN,
           geolocation, and reverse DNS were not applicable.
         </p>
       ) : (
-        <div className="space-y-4">
-          {ips.map((entry) => (
-            <IpCard key={asString(entry.ip_address) ?? Math.random()} entry={entry} />
-          ))}
+        <div className="overflow-x-auto rounded-lg border border-slate-100 dark:border-slate-800">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400 dark:border-slate-800">
+                <th className="px-3 py-2 font-medium">IP</th>
+                <th className="px-3 py-2 font-medium">ASN</th>
+                <th className="px-3 py-2 font-medium">Country</th>
+                <th className="px-3 py-2 font-medium">Reverse DNS</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {rows.map((row) => (
+                <tr key={row.ip}>
+                  <td className="px-3 py-2 font-mono text-xs text-slate-900 dark:text-white">
+                    {row.ip}
+                  </td>
+                  <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{row.asn}</td>
+                  <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{row.country}</td>
+                  <td className="px-3 py-2 text-slate-700 dark:text-slate-300">
+                    {row.reverseDns}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
+      )}
+
+      {anyIpv6Unsupported && (
+        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+          IPv6 ASN lookup is not supported by the current provider.
+        </p>
       )}
 
       {dnsNotes && Array.isArray(dnsNotes.non_public_ips_excluded) && (
@@ -461,51 +539,152 @@ function IpIntelligenceSection({
   );
 }
 
-function IpCard({ entry }: { entry: Record<string, unknown> }) {
-  const ip = asString(entry.ip_address) ?? "Unknown IP";
-  const asn = asRecord(entry.asn);
-  const geo = asRecord(entry.geolocation);
-  const rdns = asRecord(entry.reverse_dns);
+// ==========================================================
+// Threat Intelligence
+// ==========================================================
 
-  const asnData = asn?.status === "success" ? asRecord(asn.data) : null;
-  const geoData = geo?.status === "success" ? asRecord(geo.data) : null;
-  const rdnsData = rdns?.status === "success" ? asRecord(rdns.data) : null;
-  const rdnsHostnames =
-    rdnsData && Array.isArray(rdnsData.hostnames) ? (rdnsData.hostnames as unknown[]).map(String) : [];
+const PROVIDER_LABELS: Record<string, string> = {
+  shodan: "Shodan",
+  censys: "Censys",
+  greynoise: "GreyNoise",
+  otx: "OTX",
+  securitytrails: "SecurityTrails",
+};
+
+function findByPrefix(
+  results: InvestigationResult[],
+  prefix: string
+): InvestigationResult | undefined {
+  return results.find(
+    (result) => result.source === prefix || result.source.startsWith(`${prefix}:`)
+  );
+}
+
+function summarizeProvider(key: string, result: InvestigationResult): string | null {
+  const data = asRecord(result.data);
+
+  if (!data) return "Ran, no additional detail returned.";
+
+  if (key === "greynoise") {
+    const classification = asString(data.classification) ?? "unknown";
+    const isRiot = asBoolean(data.is_common_business_service);
+    const isNoise = asBoolean(data.is_internet_noise);
+
+    if (isRiot) return "Identified as a known, common business service.";
+    if (isNoise) return `Internet-wide scanning observed, classified as ${classification}.`;
+    return "No internet-wide scanning activity observed.";
+  }
+
+  if (key === "otx") {
+    const pulseCount = asNumber(data.pulse_count) ?? 0;
+    return pulseCount > 0
+      ? `Referenced in ${pulseCount} community threat pulse${pulseCount === 1 ? "" : "s"}.`
+      : "Not referenced in any community threat pulses.";
+  }
+
+  if (key === "shodan") {
+    const vulnCount = Array.isArray(data.vulnerabilities) ? data.vulnerabilities.length : 0;
+    const openPorts = Array.isArray(data.open_ports) ? data.open_ports.length : 0;
+    return vulnCount > 0
+      ? `${openPorts} open port${openPorts === 1 ? "" : "s"}, ${vulnCount} known CVE${vulnCount === 1 ? "" : "s"} listed.`
+      : `${openPorts} open port${openPorts === 1 ? "" : "s"}, no known CVEs listed.`;
+  }
+
+  if (key === "censys") {
+    const services = Array.isArray(data.services) ? data.services.length : null;
+    return services !== null
+      ? `${services} exposed service${services === 1 ? "" : "s"} observed.`
+      : "Ran, no additional detail returned.";
+  }
+
+  return "Ran, no additional detail returned.";
+}
+
+function ThreatIntelligenceSection({
+  results,
+  assessment,
+}: {
+  results: InvestigationResult[];
+  assessment: Record<string, unknown>;
+}) {
+  const unavailable = Array.isArray(assessment.providers_unavailable)
+    ? (assessment.providers_unavailable as unknown[]).map(String)
+    : [];
+  const failed = Array.isArray(assessment.providers_failed)
+    ? (assessment.providers_failed as unknown[]).map(String)
+    : [];
+
+  const consultedRows = ["shodan", "censys", "greynoise", "otx"]
+    .map((key) => {
+      const result = findByPrefix(results, key);
+      if (!result || result.status !== "success") return null;
+      return { key, label: PROVIDER_LABELS[key] ?? key, summary: summarizeProvider(key, result) };
+    })
+    .filter((row): row is { key: string; label: string; summary: string | null } => row !== null);
+
+  const unavailableAll = [...new Set([...unavailable, ...failed])];
 
   return (
-    <div className="rounded-lg border border-slate-100 p-3 dark:border-slate-800">
-      <p className="font-mono text-sm font-medium text-slate-900 dark:text-white">{ip}</p>
+    <Section title="Threat Intelligence">
+      {consultedRows.length > 0 ? (
+        <ul className="space-y-1 text-sm text-slate-700 dark:text-slate-300">
+          {consultedRows.map((row) => (
+            <li key={row.key}>
+              <span className="font-medium text-slate-900 dark:text-white">{row.label}:</span>{" "}
+              {row.summary}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-sm text-slate-500 dark:text-slate-400">
+          No threat intelligence provider returned data for this investigation.
+        </p>
+      )}
 
-      <FieldGrid
-        fields={[
-          [
-            "ASN",
-            asnData
-              ? `${asString(asnData.asn) ?? "?"} (${asString(asnData.asn_name) ?? "unknown org"})`
-              : asn?.status === "skipped"
-              ? "Not applicable (IPv6 not supported by this lookup)"
-              : "Not found",
-          ],
-          [
-            "Location",
-            geoData
-              ? [asString(geoData.city), asString(geoData.country)].filter(Boolean).join(", ") || "Unknown"
-              : "Not available",
-          ],
-          [
-            "Reverse DNS",
-            rdnsHostnames.length > 0 ? rdnsHostnames.join(", ") : "No PTR record",
-          ],
-        ]}
-      />
-    </div>
+      {unavailableAll.length > 0 && (
+        <div className="mt-3">
+          <p className="text-xs uppercase tracking-wide text-slate-400">
+            Unavailable Providers
+          </p>
+          <ul className="mt-1 space-y-0.5 text-sm text-slate-500 dark:text-slate-400">
+            {unavailableAll.map((name) => (
+              <li key={name}>{PROVIDER_LABELS[name] ?? name}</li>
+            ))}
+          </ul>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            Unavailable providers were not counted toward the assessment
+            above - they simply did not run.
+          </p>
+        </div>
+      )}
+    </Section>
   );
 }
 
 // ==========================================================
 // Shared bits
 // ==========================================================
+
+function formatMonthYear(isoString: string): string {
+  const parsed = new Date(isoString);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return isoString;
+  }
+
+  return parsed.toLocaleDateString(undefined, { month: "short", year: "numeric" });
+}
+
+function extractYear(rawDate: string): string | null {
+  const trimmed = rawDate.trim();
+
+  if (/^\d{4}/.test(trimmed)) {
+    return trimmed.slice(0, 4);
+  }
+
+  const match = trimmed.match(/\b(\d{4})\b/);
+  return match ? match[1] : null;
+}
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (

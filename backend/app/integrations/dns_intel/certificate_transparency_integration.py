@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import httpx
@@ -38,12 +39,37 @@ class CertificateTransparencyIntegration(AsyncBaseIntegration):
         url = f"{settings.CRT_SH_BASE_URL}/"
         params = {"q": f"%.{domain}", "output": "json"}
 
+        # crt.sh is a free, best-effort public mirror and is known to
+        # return transient 5xx responses under load. request_with_retry
+        # already retries connection-level failures (timeouts, connect
+        # errors) - this adds a small local retry specifically for HTTP
+        # error status codes, scoped to this integration only, rather
+        # than changing the shared retry policy for every integration.
+        max_attempts = 3
+        response = None
+
         async with httpx.AsyncClient(timeout=settings.CRT_SH_TIMEOUT_SECONDS) as client:
 
-            response = await request_with_retry(client, "GET", url, params=params)
+            for attempt in range(max_attempts):
 
-        if response.status_code == 429:
-            raise IntegrationRateLimitError("crt.sh rate limit exceeded.")
+                response = await request_with_retry(client, "GET", url, params=params)
+
+                if response.status_code == 429:
+                    raise IntegrationRateLimitError("crt.sh rate limit exceeded.")
+
+                if response.status_code < 500:
+                    break
+
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(0.5 * (attempt + 1))
+
+        if response is None or response.status_code >= 500:
+
+            return IntegrationResult(
+                source=self.source_name,
+                status=ModuleResultStatus.FAILED,
+                error_message="Certificate Transparency temporarily unavailable.",
+            )
 
         if response.status_code != 200:
 
