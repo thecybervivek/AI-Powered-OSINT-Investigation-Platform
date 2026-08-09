@@ -29,7 +29,7 @@ from backend.app.utils.perceptual_hashing import is_near_duplicate
 from backend.app.utils.perceptual_hashing import similarity_score
 from backend.app.utils.risk_scoring import clamp
 from backend.app.utils.risk_scoring import risk_level_from_score
-
+from backend.app.integrations.base import IntegrationResult
 
 class ReverseImageIntelligenceService:
     """
@@ -275,6 +275,20 @@ class ReverseImageIntelligenceService:
             perceptual_error=perceptual_error,
         )
 
+        assessment = _build_reverse_image_assessment(
+            duplicate_data=duplicate_data,
+            extracted_metadata=extracted_metadata,
+            perceptual_error=perceptual_error,
+        )
+        self.investigations.add_result(
+            InvestigationResult(
+                investigation_id=investigation.id,
+                source="threat_assessment",
+                status=ModuleResultStatus.SUCCESS,
+                data=assessment.data,
+            )
+        )
+
         investigation = self.investigations.update(
             investigation,
             target=hashes.sha256,
@@ -282,9 +296,8 @@ class ReverseImageIntelligenceService:
             risk_score=risk_score,
             risk_level=risk_level_from_score(risk_score),
             summary=self._build_summary(
-                filename=original_filename,
-                sha256=hashes.sha256,
-                risk_notes=risk_notes,
+                assessment_data=assessment.data,
+                extracted_metadata=extracted_metadata,
             ),
             completed_at=datetime.now(timezone.utc),
         )
@@ -407,16 +420,144 @@ class ReverseImageIntelligenceService:
         return clamp(score), notes
 
     def _build_summary(
-        self,
-        *,
-        filename: str,
-        sha256: str,
-        risk_notes: list[str],
-    ) -> str:
+            self,
+            *,
+            assessment_data: dict,
+            extracted_metadata: dict,
+        ) -> str:
+            """
+            An analyst-style conclusion, matching the production-polish spec's
+            example almost field for field.
+            """
+    
+            sentences = ["Image metadata extracted."]
+    
+            gps = extracted_metadata.get("gps") if extracted_metadata else None
+    
+            if gps:
+                sentences.append(
+                    "GPS coordinates were detected in the image's EXIF data."
+                )
+            else:
+                sentences.append("No GPS coordinates detected.")
+    
+            sentences.append("No public reverse image providers were configured.")
+    
+            state = assessment_data.get("state")
+    
+            if state == "image_matches_found":
+                reasoning = assessment_data.get("reasoning", [])
+                sentences.append(
+                    "; ".join(reasoning) + "."
+                    if reasoning
+                    else "A match was found against a previously investigated image."
+                )
+            else:
+                sentences.append(
+                    "No matching public copies were identified from available evidence."
+                )
+    
+            return " ".join(sentences)
 
-        prefix = f"'{filename}' (sha256={sha256[:16]}...)"
 
-        if not risk_notes:
-            return f"No notable risk signals found for {prefix}."
+# ==========================================================
+# Evidence-backed assessment (replaces bare Risk Score as the
+# primary conclusion for Reverse Image Investigation - production-
+# polish item 1)
+# ==========================================================
 
-        return f"Risk signals for {prefix}: " + "; ".join(risk_notes) + "."
+# No public reverse-image-search provider (Google Lens, Bing Visual
+# Search, TinEye, Yandex, SauceNAO, IQDB) is implemented anywhere in
+# this repository - confirmed by directory listing. Listed as
+# unavailable for transparency; never presented as if any of them ran.
+_PUBLIC_REVERSE_IMAGE_PROVIDERS = (
+    "google_lens",
+    "bing_visual_search",
+    "tineye",
+    "yandex",
+    "saucenao",
+    "iqdb",
+)
+
+
+def _build_reverse_image_assessment(
+    *,
+    duplicate_data: dict | None,
+    extracted_metadata: dict,
+    perceptual_error: str | None,
+) -> IntegrationResult:
+    """
+    States: image_matches_found, no_public_matches_found,
+    metadata_only, investigation_incomplete.
+
+    Only two real signal sources exist in this codebase today:
+    internal fingerprint correlation (exact/near-duplicate matches
+    against this account's own previously investigated images) and
+    metadata/EXIF extraction. There is no public reverse-image-search
+    capability at all - "no_public_matches_found" is used honestly
+    here to mean "internal correlation checked, nothing found," with
+    that distinction stated explicitly in the reasoning rather than
+    implied to be a broader web search.
+    """
+
+    reasoning: list[str] = []
+
+    duplicate_ran = duplicate_data is not None and "exact_duplicate_found" in (
+        duplicate_data or {}
+    )
+    metadata_ran = bool(extracted_metadata) and extracted_metadata.get("error") is None
+
+    if duplicate_ran and (
+        duplicate_data.get("exact_duplicate_found")
+        or duplicate_data.get("near_duplicate_found")
+    ):
+        state = "image_matches_found"
+        label = "Image matches found"
+
+        if duplicate_data.get("exact_duplicate_found"):
+            reasoning.append(
+                "Identical to a previously investigated image in this account's history"
+            )
+        else:
+            similarity = duplicate_data.get("similarity_score")
+            reasoning.append(
+                f"Near-duplicate match found ({similarity}% similarity) against a "
+                "previously investigated image in this account's history"
+                if similarity is not None
+                else "Near-duplicate match found against a previously investigated image"
+            )
+
+    elif duplicate_ran:
+        state = "no_public_matches_found"
+        label = "No public matches found"
+        reasoning.append(
+            "No match found against this account's previously investigated images. "
+            "No public reverse-image-search provider was consulted - none is "
+            "configured in this deployment."
+        )
+
+    elif metadata_ran:
+        state = "metadata_only"
+        label = "Metadata only"
+        reasoning.append(
+            "Image metadata was extracted, but similarity/duplicate correlation "
+            "could not be completed" + (f": {perceptual_error}" if perceptual_error else ".")
+        )
+
+    else:
+        state = "investigation_incomplete"
+        label = "Investigation incomplete"
+        reasoning.append(
+            "Neither metadata extraction nor duplicate correlation could be completed."
+        )
+
+    return IntegrationResult(
+    source="threat_assessment",
+    status=ModuleResultStatus.SUCCESS,
+    data={
+        "state": state,
+        "label": label,
+        "reasoning": reasoning,
+        "providers_unavailable": list(_PUBLIC_REVERSE_IMAGE_PROVIDERS),
+    },
+)

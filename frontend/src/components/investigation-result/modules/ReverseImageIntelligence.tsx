@@ -10,6 +10,7 @@ import {
   asString,
   findResult,
 } from "@/utils/evidenceData";
+import { AssessmentBanner } from "./DomainIntelligence";
 
 interface ReverseImageIntelligenceProps {
   results: InvestigationResult[];
@@ -42,12 +43,15 @@ export function ReverseImageIntelligence({ results }: ReverseImageIntelligencePr
   const perceptual = asRecord(findResult(results, "perceptual_hashing")?.data);
   const metadata = asRecord(findResult(results, "metadata_extraction")?.data);
   const duplicates = asRecord(findResult(results, "duplicate_detection")?.data);
+  const assessment = asRecord(findResult(results, "threat_assessment")?.data);
 
   const exif = metadata ? asRecord(metadata.exif) : null;
   const gps = metadata ? asRecord(metadata.gps) : null;
 
   return (
     <div className="space-y-6">
+      {assessment && <AssessmentBanner assessment={assessment} />}
+
       {validation && (
         <Section title="File Overview">
           <FieldGrid
@@ -212,7 +216,48 @@ export function ReverseImageIntelligence({ results }: ReverseImageIntelligencePr
           </div>
         </Section>
       )}
+
+      {assessment && <ReverseSearchProvidersSection assessment={assessment} />}
     </div>
+  );
+}
+
+const REVERSE_SEARCH_PROVIDER_LABELS: Record<string, string> = {
+  google_lens: "Google Lens",
+  bing_visual_search: "Bing Visual Search",
+  tineye: "TinEye",
+  yandex: "Yandex",
+  saucenao: "SauceNAO",
+  iqdb: "IQDB",
+};
+
+function ReverseSearchProvidersSection({
+  assessment,
+}: {
+  assessment: Record<string, unknown>;
+}) {
+  const unavailable = Array.isArray(assessment.providers_unavailable)
+    ? (assessment.providers_unavailable as unknown[]).map(String)
+    : [];
+
+  if (unavailable.length === 0) return null;
+
+  return (
+    <Section title="Public Reverse Image Search">
+      <p className="mb-2 text-sm text-slate-500 dark:text-slate-400">
+        No public reverse-image-search provider is configured in this
+        deployment. Matches above reflect only this account's own
+        previously investigated images, not a public web search.
+      </p>
+      <p className="text-xs uppercase tracking-wide text-slate-400">
+        Unavailable Providers
+      </p>
+      <ul className="mt-1 space-y-0.5 text-sm text-slate-500 dark:text-slate-400">
+        {unavailable.map((name) => (
+          <li key={name}>{REVERSE_SEARCH_PROVIDER_LABELS[name] ?? name}</li>
+        ))}
+      </ul>
+    </Section>
   );
 }
 

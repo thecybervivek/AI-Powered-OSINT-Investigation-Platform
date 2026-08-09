@@ -54,22 +54,28 @@ export function InvestigationDetailPage() {
   const hasDedicatedIntelligence =
     investigation.investigation_type === "reverse_image" ||
     investigation.investigation_type === "file" ||
-    investigation.investigation_type === "domain";
+    investigation.investigation_type === "domain" ||
+    investigation.investigation_type === "url";
 
-  // Domain Investigation now has its own evidence-backed Assessment
-  // (see DomainIntelligence.tsx) - a numeric Risk Score/Level next to
-  // it would be exactly the misleading "passive OSINT can't assign a
-  // precise number" problem the assessment replaces. Other types keep
-  // the existing risk grid until they get the same treatment.
-  const isDomainInvestigation = investigation.investigation_type === "domain";
+  // Domain and URL Investigation now have their own evidence-backed
+  // Assessment (see DomainIntelligence.tsx / UrlIntelligence.tsx) - a
+  // numeric Risk Score/Level next to it would be exactly the
+  // misleading "passive OSINT can't assign a precise number" problem
+  // the assessment replaces. Other types keep the existing risk grid
+  // until they get the same treatment.
+  const hasEvidenceBackedAssessment =
+    investigation.investigation_type === "domain" ||
+    investigation.investigation_type === "url" ||
+    investigation.investigation_type === "file" ||
+    investigation.investigation_type === "reverse_image";
 
-  // Domain's grouped sections (DNS/Registration/TLS/Technology/
-  // Subdomains/IP Intelligence/Threat Intelligence) already summarize
-  // every real finding - showing the full per-provider evidence list
-  // underneath by default would mean "dozens of individual evidence
-  // cards" right back again. Nothing is removed - it's one click away
-  // - it's just not dumped on screen by default.
-  const shouldCollapseRawEvidence = isDomainInvestigation;
+  // These types' grouped sections (DNS/Registration/TLS/Technology/
+  // Threat Intelligence/etc.) already summarize every real finding -
+  // showing the full per-provider evidence list underneath by default
+  // would mean "dozens of individual evidence cards" right back again.
+  // Nothing is removed - it's one click away - it's just not dumped
+  // on screen by default.
+  const shouldCollapseRawEvidence = hasEvidenceBackedAssessment;
 
   return (
     <div className="space-y-6">
@@ -87,7 +93,7 @@ export function InvestigationDetailPage() {
         isGeneratingReport={generateReport.isPending}
       />
 
-      {!isDomainInvestigation && (
+      {!hasEvidenceBackedAssessment && (
         // Pre-Account-2 placeholder for every other type. This becomes
         // AssessmentDimensions (Security Risk / Digital Exposure /
         // Confidence / Coverage) once Account 2's evidence architecture

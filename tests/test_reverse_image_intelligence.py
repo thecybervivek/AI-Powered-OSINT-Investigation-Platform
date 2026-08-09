@@ -230,13 +230,16 @@ def test_build_summary_reports_no_risk_when_notes_empty():
     service = _service()
 
     summary = service._build_summary(
-        filename="photo.jpg",
-        sha256="a" * 64,
-        risk_notes=[],
+        assessment_data={
+            "state": "no_public_matches_found",
+            "reasoning": [],
+        },
+        extracted_metadata={},
     )
 
-    assert "No notable risk signals" in summary
-    assert "photo.jpg" in summary
+    assert "No GPS coordinates detected." in summary
+    assert "No public reverse image providers were configured." in summary
+    assert "No matching public copies were identified" in summary
 
 
 def test_build_summary_joins_risk_notes():
@@ -244,13 +247,22 @@ def test_build_summary_joins_risk_notes():
     service = _service()
 
     summary = service._build_summary(
-        filename="photo.jpg",
-        sha256="a" * 64,
-        risk_notes=["GPS coordinates embedded in image metadata"],
+        assessment_data={
+            "state": "image_matches_found",
+            "reasoning": [
+                "GPS coordinates embedded in image metadata",
+            ],
+        },
+        extracted_metadata={
+            "gps": {
+                "latitude": 28.6139,
+                "longitude": 77.2090,
+            }
+        },
     )
 
-    assert "GPS coordinates embedded" in summary
-
+    assert "GPS coordinates were detected" in summary
+    assert "GPS coordinates embedded in image metadata" in summary
 
 # ==========================================================
 # Regression: 502 root cause

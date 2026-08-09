@@ -144,7 +144,9 @@ describe("InvestigationDetailPage", () => {
     expect(screen.getByText("sherlock")).toBeInTheDocument();
   });
 
-  it("renders the Reverse Image dedicated renderer plus the full evidence list", () => {
+  it("renders the Reverse Image dedicated renderer plus the full evidence list (behind the raw-evidence toggle)", async () => {
+    const user = userEvent.setup();
+
     renderPage(
       makeInvestigation({
         investigation_type: "reverse_image",
@@ -194,7 +196,12 @@ describe("InvestigationDetailPage", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("None found")).toBeInTheDocument();
 
-    // Nothing is hidden: the same sources still appear in the full evidence list below.
+    // Nothing is hidden: the same 3 sources still appear in the full
+    // evidence list, one click away (collapsed by default since this
+    // type now has its own Assessment banner - production polish).
+    await user.click(
+      screen.getByRole("button", { name: /show raw evidence sources \(3\)/i })
+    );
     expect(screen.getByText("All Evidence Sources (3 sources)")).toBeInTheDocument();
   });
 
@@ -309,7 +316,22 @@ describe("InvestigationDetailPage", () => {
     expect(screen.getByText(/asn lookup \(1\.2\.3\.4\)/i)).toBeInTheDocument();
   });
 
-  it("does not collapse evidence for non-domain types with a dedicated renderer (no regression)", () => {
+  it("does not collapse evidence for types with no dedicated renderer at all (no regression)", () => {
+    renderPage(
+      makeInvestigation({
+        investigation_type: "username",
+        target: "johndoe",
+        results: [makeResult({ id: "r1", source: "sherlock", status: "success" })],
+      })
+    );
+
+    expect(screen.getByText("sherlock")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /show raw evidence sources/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("now collapses raw evidence for file and reverse_image too, since both have their own Assessment banner (production polish)", () => {
     renderPage(
       makeInvestigation({
         investigation_type: "reverse_image",
@@ -318,9 +340,64 @@ describe("InvestigationDetailPage", () => {
       })
     );
 
-    expect(screen.getByText("hash analysis")).toBeInTheDocument();
+    expect(screen.queryByText("hash analysis")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /show raw evidence sources/i })
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: /show raw evidence sources \(1\)/i })
+    ).toBeInTheDocument();
+  });
+
+  // ==========================================================
+  // URL Investigation production polish
+  // ==========================================================
+
+  it("does not show a numeric Risk Score or Risk Level for a url investigation", () => {
+    renderPage(
+      makeInvestigation({
+        investigation_type: "url",
+        target: "https://example.com",
+        risk_score: 0,
+        risk_level: "low",
+        results: [
+          makeResult({
+            id: "r1",
+            source: "threat_assessment",
+            status: "success",
+            data: {
+              state: "threat_assessment_incomplete",
+              label: "Threat assessment incomplete",
+              reasoning: [],
+              providers_consulted: [],
+              providers_unavailable: ["virustotal_url", "urlscan", "otx"],
+              providers_failed: [],
+            },
+          }),
+        ],
+      })
+    );
+
+    expect(screen.queryByText("Risk Score")).not.toBeInTheDocument();
+    expect(screen.queryByText("Risk Level")).not.toBeInTheDocument();
+    expect(screen.getByText("Threat assessment incomplete")).toBeInTheDocument();
+  });
+
+  it("collapses the raw evidence list behind a toggle for url investigations too", async () => {
+    const user = userEvent.setup();
+
+    renderPage(
+      makeInvestigation({
+        investigation_type: "url",
+        target: "https://example.com",
+        results: [
+          makeResult({ id: "r1", source: "http_response", status: "success" }),
+        ],
+      })
+    );
+
+    expect(screen.queryByText("http response")).not.toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: /show raw evidence sources \(1\)/i });
+
+    await user.click(toggle);
+
+    expect(screen.getByText("http response")).toBeInTheDocument();
   });
 });

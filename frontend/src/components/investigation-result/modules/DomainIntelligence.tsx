@@ -75,6 +75,11 @@ const ASSESSMENT_ICONS: Record<string, typeof ShieldCheck> = {
   no_malicious_evidence_detected: ShieldCheck,
   inconclusive: ShieldQuestion,
   threat_assessment_incomplete: ShieldQuestion,
+  // Reverse Image's own distinct states (production polish).
+  image_matches_found: ShieldAlert,
+  no_public_matches_found: ShieldCheck,
+  metadata_only: ShieldQuestion,
+  investigation_incomplete: ShieldQuestion,
 };
 
 const ASSESSMENT_TONES: Record<string, string> = {
@@ -88,9 +93,18 @@ const ASSESSMENT_TONES: Record<string, string> = {
     "border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-300",
   threat_assessment_incomplete:
     "border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-300",
+  // Reverse Image's own distinct states (production polish).
+  image_matches_found:
+    "border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-900/50 dark:bg-orange-950/20 dark:text-orange-300",
+  no_public_matches_found:
+    "border-green-200 bg-green-50 text-green-700 dark:border-green-900/50 dark:bg-green-950/20 dark:text-green-300",
+  metadata_only:
+    "border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-300",
+  investigation_incomplete:
+    "border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-300",
 };
 
-function AssessmentBanner({ assessment }: { assessment: Record<string, unknown> }) {
+export function AssessmentBanner({ assessment }: { assessment: Record<string, unknown> }) {
   const state = asString(assessment.state) ?? "threat_assessment_incomplete";
   const label = asString(assessment.label) ?? "Threat assessment incomplete";
   const reasoning = Array.isArray(assessment.reasoning)
@@ -142,7 +156,7 @@ function AssessmentBanner({ assessment }: { assessment: Record<string, unknown> 
 // DNS Records
 // ==========================================================
 
-function DnsRecordsSection({ dnsLookup }: { dnsLookup: Record<string, unknown> }) {
+export function DnsRecordsSection({ dnsLookup }: { dnsLookup: Record<string, unknown> }) {
   const records = asRecord(dnsLookup.records) ?? {};
   const domainExists = asBoolean(dnsLookup.domain_exists);
 
@@ -187,7 +201,7 @@ function DnsRecordsSection({ dnsLookup }: { dnsLookup: Record<string, unknown> }
 // WHOIS
 // ==========================================================
 
-function WhoisSection({ whois }: { whois: Record<string, unknown> }) {
+export function WhoisSection({ whois }: { whois: Record<string, unknown> }) {
   if (asBoolean(whois.registered) === false) {
     return (
       <Section title="Registration">
@@ -250,7 +264,7 @@ function WhoisSection({ whois }: { whois: Record<string, unknown> }) {
 // TLS
 // ==========================================================
 
-function TlsSection({ ssl }: { ssl: Record<string, unknown> }) {
+export function TlsSection({ ssl }: { ssl: Record<string, unknown> }) {
   if (asBoolean(ssl.certificate_valid) === false) {
     return (
       <Section title="TLS Certificate">
@@ -315,7 +329,7 @@ function TlsSection({ ssl }: { ssl: Record<string, unknown> }) {
 // Technology
 // ==========================================================
 
-function TechnologySection({ technology }: { technology: Record<string, unknown> }) {
+export function TechnologySection({ technology }: { technology: Record<string, unknown> }) {
   const detected = Array.isArray(technology.technologies_detected)
     ? (technology.technologies_detected as unknown[]).map(String)
     : [];
@@ -665,7 +679,7 @@ function ThreatIntelligenceSection({
 // Shared bits
 // ==========================================================
 
-function formatMonthYear(isoString: string): string {
+export function formatMonthYear(isoString: string): string {
   const parsed = new Date(isoString);
 
   if (Number.isNaN(parsed.getTime())) {
@@ -675,7 +689,7 @@ function formatMonthYear(isoString: string): string {
   return parsed.toLocaleDateString(undefined, { month: "short", year: "numeric" });
 }
 
-function extractYear(rawDate: string): string | null {
+export function extractYear(rawDate: string): string | null {
   const trimmed = rawDate.trim();
 
   if (/^\d{4}/.test(trimmed)) {
@@ -686,7 +700,7 @@ function extractYear(rawDate: string): string | null {
   return match ? match[1] : null;
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+export function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
       <h3 className="mb-2 text-sm font-semibold text-slate-900 dark:text-white">{title}</h3>
@@ -695,7 +709,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function FieldGrid({ fields }: { fields: [string, string][] }) {
+export function FieldGrid({ fields }: { fields: [string, string][] }) {
   return (
     <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
       {fields.map(([label, value]) => (

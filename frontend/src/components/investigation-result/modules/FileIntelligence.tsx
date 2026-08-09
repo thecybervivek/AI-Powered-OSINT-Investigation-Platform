@@ -1,6 +1,7 @@
 import type { InvestigationResult } from "@/types/investigation";
 import { formatBytes, formatDate } from "@/utils/formatters";
 import { asBoolean, asNumber, asRecord, asString, findResult } from "@/utils/evidenceData";
+import { AssessmentBanner } from "./DomainIntelligence";
 
 interface FileIntelligenceProps {
   results: InvestigationResult[];
@@ -36,9 +37,14 @@ export function FileIntelligence({ results }: FileIntelligenceProps) {
   const hashes = asRecord(findResult(results, "hash_analysis")?.data);
   const metadata = asRecord(findResult(results, "metadata_extraction")?.data);
   const timeline = asRecord(findResult(results, "timeline_analysis")?.data);
+  const integrity = asRecord(findResult(results, "file_integrity")?.data);
+  const assessment = asRecord(findResult(results, "threat_assessment")?.data);
+  const virustotal = asRecord(findResult(results, "virustotal_file")?.data);
 
   return (
     <div className="space-y-6">
+      {assessment && <AssessmentBanner assessment={assessment} />}
+
       {validation && (
         <Section title="File Overview">
           <FieldGrid
@@ -120,7 +126,193 @@ export function FileIntelligence({ results }: FileIntelligenceProps) {
           </p>
         </Section>
       )}
+
+      {integrity && (
+        <Section title="File Structure">
+          <FieldGrid
+            fields={[
+              [
+                "Entropy",
+                asNumber(integrity.entropy) !== null
+                  ? `${integrity.entropy} bits/byte`
+                  : "—",
+              ],
+              ["Packed/compressed indicator", asBoolean(integrity.high_entropy) ? "Yes" : "No"],
+            ]}
+          />
+          {asBoolean(integrity.high_entropy) && (
+            <Callout>
+              This file's entropy is high enough to suggest it may be
+              packed, compressed, or encrypted. This is a prompt to look
+              closer, not itself a malicious indicator - legitimate
+              compressed/encrypted files show the same signal.
+            </Callout>
+          )}
+        </Section>
+      )}
+
+      <MalwareIntelligenceSection results={results} assessment={assessment} />
+
+      {virustotal?.signature_info ? (
+        <Section title="Digital Signature">
+          <FieldGrid
+            fields={Object.entries(asRecord(virustotal.signature_info) ?? {}).map(
+              ([key, value]) => [key.replace(/_/g, " "), String(value)]
+            )}
+          />
+        </Section>
+      ) : (
+        <Section title="Digital Signature">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Not checked - signature information is only available when
+            VirusTotal is configured and has analyzed this file.
+          </p>
+        </Section>
+      )}
     </div>
+  );
+}
+
+// ==========================================================
+// Malware Intelligence
+// ==========================================================
+
+const MALWARE_PROVIDER_LABELS: Record<string, string> = {
+  virustotal: "VirusTotal",
+  malwarebazaar: "MalwareBazaar",
+  hybrid_analysis: "Hybrid Analysis",
+  otx: "OTX",
+};
+
+const MALWARE_SOURCE_NAMES: Record<string, string> = {
+  virustotal: "virustotal_file",
+  malwarebazaar: "malwarebazaar",
+  hybrid_analysis: "hybrid_analysis",
+  otx: "otx",
+};
+
+function summarizeMalwareProvider(
+  key: string,
+  result: InvestigationResult
+): string {
+  const data = asRecord(result.data);
+
+  if (result.status === "not_found") {
+    return "Not previously seen by this provider.";
+  }
+
+  if (!data) {
+    return "Ran, no additional detail returned.";
+  }
+
+  if (key === "virustotal") {
+    const stats = asRecord(data.analysis_stats);
+    const malicious = (stats?.malicious as number) ?? 0;
+    const total = stats
+      ? Object.values(stats).reduce(
+          (sum: number, v) => sum + (typeof v === "number" ? v : 0),
+          0
+        )
+      : 0;
+
+    return `${malicious} / ${total} detections`;
+  }
+
+  if (key === "malwarebazaar") {
+    return asBoolean(data.known_to_malwarebazaar)
+      ? `Known sample${asString(data.signature) ? ` (${data.signature})` : ""}.`
+      : "Not a known sample.";
+  }
+
+  if (key === "hybrid_analysis") {
+    const verdict = asString(data.verdict);
+    return verdict ? `Verdict: ${verdict}.` : "Ran, no verdict returned.";
+  }
+
+  if (key === "otx") {
+    const pulseCount = (data.pulse_count as number) ?? 0;
+    return pulseCount > 0
+      ? `Referenced in ${pulseCount} community threat pulse${
+          pulseCount === 1 ? "" : "s"
+        }.`
+      : "Not referenced in any community threat pulses.";
+  }
+
+  return "Ran, no additional detail returned.";
+}
+
+function MalwareIntelligenceSection({
+  results,
+  assessment,
+}: {
+  results: InvestigationResult[];
+  assessment: Record<string, unknown> | null;
+}) {
+  const yara = asRecord(findResult(results, "yara_scan")?.data);
+  const yaraResult = findResult(results, "yara_scan");
+
+  const unavailable = assessment && Array.isArray(assessment.providers_unavailable)
+    ? (assessment.providers_unavailable as unknown[]).map(String)
+    : [];
+  const failed = assessment && Array.isArray(assessment.providers_failed)
+    ? (assessment.providers_failed as unknown[]).map(String)
+    : [];
+
+  const consultedRows = ["virustotal", "malwarebazaar", "hybrid_analysis", "otx"]
+    .map((key) => {
+      const result = findResult(results, MALWARE_SOURCE_NAMES[key]);
+      if (!result || (result.status !== "success" && result.status !== "not_found")) {
+        return null;
+      }
+      return {
+        key,
+        label: MALWARE_PROVIDER_LABELS[key],
+        summary: summarizeMalwareProvider(key, result),
+      };
+    })
+    .filter((row): row is { key: string; label: string; summary: string } => row !== null);
+
+  const unavailableAll = [...new Set([...unavailable, ...failed])];
+
+  return (
+    <Section title="Malware Intelligence">
+      {consultedRows.length > 0 ? (
+        <ul className="space-y-1 text-sm text-slate-700 dark:text-slate-300">
+          {consultedRows.map((row) => (
+            <li key={row.key}>
+              <span className="font-medium text-slate-900 dark:text-white">{row.label}:</span>{" "}
+              {row.summary}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-sm text-slate-500 dark:text-slate-400">
+          No malware intelligence provider returned data for this file.
+        </p>
+      )}
+
+      <p className="mt-2 text-sm text-slate-700 dark:text-slate-300">
+        <span className="font-medium text-slate-900 dark:text-white">YARA:</span>{" "}
+        {!yaraResult || yaraResult.status === "skipped"
+          ? "Not available in this deployment."
+          : yara?.matched
+          ? `${asNumber(yara.match_count) ?? "Some"} matching rule(s).`
+          : "No matching YARA rules."}
+      </p>
+
+      {unavailableAll.length > 0 && (
+        <div className="mt-3">
+          <p className="text-xs uppercase tracking-wide text-slate-400">
+            Unavailable Providers
+          </p>
+          <ul className="mt-1 space-y-0.5 text-sm text-slate-500 dark:text-slate-400">
+            {unavailableAll.map((name) => (
+              <li key={name}>{MALWARE_PROVIDER_LABELS[name] ?? name} unavailable.</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Section>
   );
 }
 
