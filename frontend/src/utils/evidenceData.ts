@@ -33,3 +33,7 @@ export function asNumber(value: unknown): number | null {
 export function asBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
+
+export function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}

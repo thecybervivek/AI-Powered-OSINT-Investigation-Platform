@@ -93,6 +93,14 @@ class Settings(BaseSettings):
     HIBP_BASE_URL: str = "https://haveibeenpwned.com/api/v3"
     GRAVATAR_BASE_URL: str = "https://www.gravatar.com"
 
+    # Milestone 3 - Email Intelligence: account-presence checking
+    # (holehe-style) and the optional/disabled-by-default Google
+    # intelligence slot (ghunt-style). See account_presence.py and
+    # ghunt_integration.py for why the latter stays off by default.
+    EMAIL_ACCOUNT_PRESENCE_TIMEOUT_SECONDS: float = 6.0
+    EMAIL_ACCOUNT_PRESENCE_MAX_CONCURRENCY: int = 10
+    GHUNT_SESSION_CONFIGURED: bool = False
+
     # Milestone 4 - Domain / IP / DNS Intelligence
     DNS_RESOLVER_TIMEOUT_SECONDS: float = 5.0
     WHOIS_TIMEOUT_SECONDS: float = 8.0
