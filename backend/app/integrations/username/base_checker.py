@@ -30,6 +30,27 @@ class PlatformCheckResult:
     error: str | None = None
 
 
+def platform_check_state(check: "PlatformCheckResult") -> str:
+    """
+    Maps a single engine's tri-state `exists` (True/False/None) onto
+    the vocabulary the normalization layer and frontend use:
+    "confirmed" | "not_found" | "unknown". A network/timeout error
+    (check.error set) always lands on "unknown", same as a blocked or
+    unrecognized HTTP status - both are "we don't actually know".
+    """
+
+    if check.error is not None:
+        return "unknown"
+
+    if check.exists is True:
+        return "confirmed"
+
+    if check.exists is False:
+        return "not_found"
+
+    return "unknown"
+
+
 def is_valid_username(username: str) -> bool:
     """
     Conservative allow-list validation: OSINT username targets are
@@ -128,17 +149,63 @@ async def check_single_platform(
             )
 
 
+# Status codes that mean "the provider refused/blocked us", never a
+# real answer about whether the profile exists. These must NEVER be
+# read as NOT_FOUND - see docstring on _evaluate_existence.
+_BLOCKED_STATUS_CODES = {403, 999}
+
+
 def _evaluate_existence(
     platform: PlatformDefinition,
     response: httpx.Response,
 ) -> bool | None:
+    """
+    Tri-state existence decision: True (confirmed), False (confirmed
+    absent), or None (inconclusive/unknown - blocked, server error, or
+    a response shape the detection method doesn't recognize).
+
+    Status code is always consulted FIRST, before any detection-method-
+    specific body/redirect logic. This fixes a real false-positive bug:
+    ERROR_STRING_IN_BODY platforms (e.g. X/Twitter, Snapchat,
+    VKontakte, Gravatar) used to be evaluated purely by scanning the
+    response body for a "missing" marker string, regardless of status
+    code - a 404 page whose body happened not to contain that exact
+    marker text was misread as "profile exists". A constructed profile
+    URL that merely returns some 2xx-shaped response is also never
+    enough on its own; each branch below still requires the relevant
+    provider-specific confirmation (status-code match, or marker
+    absent on an actual 200) before returning True.
+    """
+
+    status = response.status_code
+
+    # Blocked/rate-limited/anti-bot responses are never a real answer -
+    # never collapse these into NOT_FOUND or CONFIRMED.
+    if status in _BLOCKED_STATUS_CODES:
+        return None
+
+    if status >= 500:
+        return None
 
     if platform.detection_method == DetectionMethod.STATUS_CODE:
-        return response.status_code == platform.existing_status
+
+        if status == platform.existing_status:
+            return True
+
+        if status == 404:
+            return False
+
+        # Any other status (redirect, unexpected 4xx, etc.) is not a
+        # code this method knows how to interpret - stay inconclusive
+        # rather than guessing.
+        return None
 
     if platform.detection_method == DetectionMethod.ERROR_STRING_IN_BODY:
 
-        if response.status_code >= 500:
+        if status == 404:
+            return False
+
+        if status != 200:
             return None
 
         body = response.text[:200_000]  # cap to avoid scanning huge pages
@@ -147,7 +214,14 @@ def _evaluate_existence(
         return marker.lower() not in body.lower()
 
     if platform.detection_method == DetectionMethod.REDIRECT_ON_MISSING:
-        return not (300 <= response.status_code < 400)
+
+        if status == 404 or 300 <= status < 400:
+            return False
+
+        if status == 200:
+            return True
+
+        return None
 
     return None
 

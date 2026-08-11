@@ -56,34 +56,25 @@ export function InvestigationDetailPage() {
     investigation.investigation_type === "file" ||
     investigation.investigation_type === "domain" ||
     investigation.investigation_type === "url" ||
-    investigation.investigation_type === "email";
+    investigation.investigation_type === "username";
 
-  // Domain and URL Investigation now have their own evidence-backed
+  // Domain and URL Investigation have their own evidence-backed
   // Assessment (see DomainIntelligence.tsx / UrlIntelligence.tsx) - a
   // numeric Risk Score/Level next to it would be exactly the
   // misleading "passive OSINT can't assign a precise number" problem
-  // the assessment replaces. Other types keep the existing risk grid
-  // until they get the same treatment. Email keeps a numeric score
-  // (that's the correct model for evidence-driven exposure scoring
-  // here, unlike Domain/URL's categorical malicious/suspicious
-  // states) but its own Risk Assessment section shows that same
-  // score plus a contributing-evidence breakdown - strictly more
-  // than the generic top grid, so it's suppressed here too to avoid
-  // showing the identical number twice on the page. Gated on the
-  // result actually being present (not just the investigation type)
-  // so an Email investigation from before this change - which has no
-  // `risk_assessment` row - still falls back to the generic grid
-  // instead of silently losing its risk score/level display.
-  const hasRiskAssessmentResult = investigation.results.some(
-    (result) => result.source === "risk_assessment"
-  );
-
+  // the assessment replaces. Username Investigation is profile
+  // discovery, not threat scoring at all (see UsernameIntelligence.tsx
+  // and username_service.py, which never computes risk_score/
+  // risk_level) - a Risk Score card next to Confirmed/Not Found/
+  // Unable to Verify would be exactly the misleading number the
+  // production fix removes. Other types keep the existing risk grid
+  // until they get the same treatment.
   const hasEvidenceBackedAssessment =
     investigation.investigation_type === "domain" ||
     investigation.investigation_type === "url" ||
     investigation.investigation_type === "file" ||
     investigation.investigation_type === "reverse_image" ||
-    (investigation.investigation_type === "email" && hasRiskAssessmentResult);
+    investigation.investigation_type === "username";
 
   // These types' grouped sections (DNS/Registration/TLS/Technology/
   // Threat Intelligence/etc.) already summarize every real finding -

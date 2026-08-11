@@ -8,14 +8,14 @@ from backend.app.integrations.base import IntegrationResult
 from backend.app.integrations.username import MaigretIntegration
 from backend.app.integrations.username import SherlockIntegration
 from backend.app.integrations.username import WhatsMyNameIntegration
+from backend.app.integrations.username.normalization import normalize_and_correlate
+from backend.app.integrations.username.normalization import summarize_findings
 from backend.app.models.investigation import Investigation
 from backend.app.models.investigation import InvestigationResult
 from backend.app.models.investigation import InvestigationStatus
 from backend.app.models.investigation import InvestigationType
 from backend.app.models.investigation import ModuleResultStatus
 from backend.app.repositories.investigation_repository import InvestigationRepository
-from backend.app.utils.risk_scoring import clamp
-from backend.app.utils.risk_scoring import risk_level_from_score
 
 _ENGINES = [
     SherlockIntegration(),
@@ -27,9 +27,18 @@ _ENGINES = [
 class UsernameIntelligenceService:
     """
     Orchestrates Milestone 2 (Username Intelligence): runs every engine
-    concurrently against the target username, builds a unified
-    cross-engine profile-existence view, computes confidence/risk
-    scores, and persists everything into the Investigation tables.
+    concurrently against the target username, normalizes and
+    deduplicates their raw per-platform results into one canonical,
+    cross-engine view (see integrations/username/normalization.py),
+    and persists everything into the Investigation tables.
+
+    Username Intelligence is public profile-discovery, not threat
+    scoring: how many platforms a handle turns up on says nothing
+    about whether the person is a security risk. This service
+    therefore NEVER computes a risk_score/risk_level - both are left
+    None (the Investigation model already supports this), the same
+    neutral behavior any other module falls back to when it has no
+    risk verdict to report.
     """
 
     def __init__(self, db: Session) -> None:
@@ -57,6 +66,9 @@ class UsernameIntelligenceService:
             *(engine.run(username) for engine in _ENGINES)
         )
 
+        # Persist each engine's raw result for auditing - untouched,
+        # exactly as returned, regardless of what normalization later
+        # does with it.
         for engine_result in engine_results:
 
             self.repository.add_result(
@@ -70,113 +82,71 @@ class UsernameIntelligenceService:
                 )
             )
 
-        unified = self._build_unified_profile(username, engine_results)
+        findings = normalize_and_correlate(engine_results)
+        summary_data = summarize_findings(findings)
+
+        engines_run = [
+            r.source for r in engine_results
+            if r.status != ModuleResultStatus.SKIPPED
+        ]
+
+        normalization_result = IntegrationResult(
+            source="username_normalization",
+            status=ModuleResultStatus.SUCCESS,
+            data={
+                "username": username,
+                "engines_run": engines_run,
+                **summary_data,
+            },
+        )
+
+        self.repository.add_result(
+            InvestigationResult(
+                investigation_id=investigation.id,
+                source=normalization_result.source,
+                status=normalization_result.status,
+                data=normalization_result.data,
+            )
+        )
 
         overall_status = self._overall_status(engine_results)
 
-        risk_score = self._compute_risk_score(unified)
-
-        summary = (
-            f"Found {unified['total_platforms_found']} matching profile(s) "
-            f"across {unified['engines_run']} engine(s) for username "
-            f"'{username}'."
-        )
+        summary = self._build_summary(username, summary_data)
 
         return self.repository.update(
             investigation,
             status=overall_status,
-            risk_score=risk_score,
-            risk_level=risk_level_from_score(risk_score),
+            risk_score=None,
+            risk_level=None,
             summary=summary,
             completed_at=datetime.now(timezone.utc),
         )
 
     # ------------------------------------------------------
-    # Unified Cross-Engine Result
+    # Summary text - describes findings, not threat risk.
     # ------------------------------------------------------
 
-    def _build_unified_profile(
-        self,
-        username: str,
-        engine_results: list[IntegrationResult],
-    ) -> dict:
-        """
-        Merges per-platform findings across all three engines into one
-        deduplicated view, with a confidence score per platform based on
-        how many engines agree it exists.
-        """
+    def _build_summary(self, username: str, summary_data: dict) -> str:
 
-        by_platform: dict[str, dict] = {}
-        engines_run = 0
+        confirmed = len(summary_data["confirmed_profiles"])
+        not_found = len(summary_data["not_found_platforms"])
+        unknown = len(summary_data["unable_to_verify_platforms"])
+        providers = summary_data["providers_consulted"]
 
-        for engine_result in engine_results:
-
-            if engine_result.status == ModuleResultStatus.SKIPPED:
-                continue
-
-            engines_run += 1
-            platform_rows = (engine_result.data or {}).get("results", [])
-
-            for row in platform_rows:
-
-                platform = row["platform"]
-                entry = by_platform.setdefault(
-                    platform,
-                    {
-                        "platform": platform,
-                        "category": row.get("category"),
-                        "profile_url": row.get("profile_url"),
-                        "votes_exists": 0,
-                        "votes_not_found": 0,
-                        "votes_inconclusive": 0,
-                        "sources": [],
-                    },
-                )
-
-                entry["sources"].append(engine_result.source)
-
-                if row.get("exists") is True:
-                    entry["votes_exists"] += 1
-
-                elif row.get("exists") is False:
-                    entry["votes_not_found"] += 1
-
-                else:
-                    entry["votes_inconclusive"] += 1
-
-        platforms = []
-
-        for entry in by_platform.values():
-
-            total_votes = (
-                entry["votes_exists"]
-                + entry["votes_not_found"]
-                + entry["votes_inconclusive"]
+        if not providers:
+            return (
+                f"Username investigation for '{username}' could not be "
+                f"completed - no engine returned usable results."
             )
 
-            confidence = (
-                round(entry["votes_exists"] / total_votes * 100, 2)
-                if total_votes
-                else 0.0
-            )
-
-            platforms.append(
-                {
-                    **entry,
-                    "confidence_score": confidence,
-                    "confirmed": entry["votes_exists"] > 0,
-                }
-            )
-
-        confirmed_platforms = [p for p in platforms if p["confirmed"]]
-
-        return {
-            "username": username,
-            "engines_run": engines_run,
-            "total_platforms_evaluated": len(platforms),
-            "total_platforms_found": len(confirmed_platforms),
-            "platforms": platforms,
-        }
+        return (
+            f"Username '{username}': {confirmed} confirmed profile"
+            f"{'' if confirmed == 1 else 's'}, {not_found} platform"
+            f"{'' if not_found == 1 else 's'} confidently checked and "
+            f"not found, {unknown} unable to verify, across "
+            f"{len(providers)} engine{'' if len(providers) == 1 else 's'} "
+            f"({', '.join(providers)})."
+        )
 
     def _overall_status(
         self,
@@ -192,23 +162,3 @@ class UsernameIntelligenceService:
             return InvestigationStatus.PARTIAL
 
         return InvestigationStatus.COMPLETED
-
-    def _compute_risk_score(self, unified: dict) -> float:
-        """
-        More confirmed exposed profiles across more platform categories
-        raises exposure/risk — this is digital-footprint exposure, not a
-        judgment about the person, purely how discoverable the handle is.
-        """
-
-        found = unified["total_platforms_found"]
-
-        if found == 0:
-            return 0.0
-
-        categories = {
-            p["category"] for p in unified["platforms"] if p["confirmed"]
-        }
-
-        score = 10 * found + 5 * len(categories)
-
-        return clamp(float(score))
