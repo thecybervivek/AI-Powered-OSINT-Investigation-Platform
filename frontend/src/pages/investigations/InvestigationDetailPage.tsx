@@ -56,7 +56,8 @@ export function InvestigationDetailPage() {
     investigation.investigation_type === "file" ||
     investigation.investigation_type === "domain" ||
     investigation.investigation_type === "url" ||
-    investigation.investigation_type === "username";
+    investigation.investigation_type === "username" ||
+    investigation.investigation_type === "email";
 
   // Domain and URL Investigation have their own evidence-backed
   // Assessment (see DomainIntelligence.tsx / UrlIntelligence.tsx) - a
@@ -67,14 +68,20 @@ export function InvestigationDetailPage() {
   // and username_service.py, which never computes risk_score/
   // risk_level) - a Risk Score card next to Confirmed/Not Found/
   // Unable to Verify would be exactly the misleading number the
-  // production fix removes. Other types keep the existing risk grid
-  // until they get the same treatment.
+  // production fix removes. Email Investigation DOES have a real,
+  // evidence-backed risk score (breach/reputation evidence only,
+  // never account presence - see email_service.py's
+  // _compute_risk_score) - it's shown via EmailIntelligence.tsx's own
+  // Risk Assessment section instead of the generic grid, so showing
+  // the generic cards too would just duplicate it. Other types keep
+  // the existing risk grid until they get the same treatment.
   const hasEvidenceBackedAssessment =
     investigation.investigation_type === "domain" ||
     investigation.investigation_type === "url" ||
     investigation.investigation_type === "file" ||
     investigation.investigation_type === "reverse_image" ||
-    investigation.investigation_type === "username";
+    investigation.investigation_type === "username" ||
+    investigation.investigation_type === "email";
 
   // These types' grouped sections (DNS/Registration/TLS/Technology/
   // Threat Intelligence/etc.) already summarize every real finding -

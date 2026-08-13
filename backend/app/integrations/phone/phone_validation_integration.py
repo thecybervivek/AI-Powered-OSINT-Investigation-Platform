@@ -29,6 +29,21 @@ _NUMBER_TYPE_LABELS: dict[int, str] = {
 }
 
 
+# Fallback default regions tried, in order, when the input has no
+# leading "+" and therefore carries no explicit country context.
+# libphonenumber CANNOT parse a bare national-format number (e.g.
+# "9917891298") without being told which region's dialing plan to
+# apply - passing region=None only works for numbers that are already
+# in E.164 form. Previously this integration always passed None, so
+# every valid Indian number typed without "+91" raised
+# NumberParseException and was reported NOT_FOUND / is_valid=False -
+# which the risk engine then read as a validation failure (see
+# phone_service.py regression fix). India is tried first because it is
+# this deployment's primary user base; additional regions can be
+# appended here without touching any other part of this integration.
+_DEFAULT_REGION_FALLBACKS: tuple[str, ...] = ("IN",)
+
+
 class PhoneValidationIntegration(AsyncBaseIntegration):
     """
     Validates and enriches a phone number entirely from libphonenumber's
@@ -47,15 +62,45 @@ class PhoneValidationIntegration(AsyncBaseIntegration):
     def is_configured(self) -> bool:
         return True
 
+    def _parse(self, target: str) -> tuple["phonenumbers.PhoneNumber", str | None]:
+        """
+        Tries to parse `target` as a phone number, returning the parsed
+        number together with the region context that was actually used
+        to resolve it (None when the input already carried its own "+"
+        country code and no fallback was needed).
+
+        A leading "+" lets libphonenumber infer the region itself. An
+        input without one is only parseable if a default region is
+        supplied - so when the direct parse fails AND the input has no
+        "+", this retries against each entry in
+        _DEFAULT_REGION_FALLBACKS before giving up. This never changes
+        behavior for numbers already in E.164 form, and never mutates
+        the caller's original input - only the returned parsed object
+        differs.
+        """
+
+        try:
+            return phonenumbers.parse(target, None), None
+
+        except NumberParseException:
+
+            if target.strip().startswith("+"):
+                raise
+
+            for region in _DEFAULT_REGION_FALLBACKS:
+
+                try:
+                    return phonenumbers.parse(target, region), region
+
+                except NumberParseException:
+                    continue
+
+            raise
+
     async def _query(self, target: str) -> IntegrationResult:
 
         try:
-            # A leading "+" lets libphonenumber infer the region itself;
-            # without one, parsing without a default region raises for
-            # any number that isn't already in E.164 form - that failure
-            # is itself useful signal ("not a parseable phone number"),
-            # not an integration error.
-            parsed = phonenumbers.parse(target, None)
+            parsed, assumed_region = self._parse(target)
 
         except NumberParseException as error:
 
@@ -66,7 +111,8 @@ class PhoneValidationIntegration(AsyncBaseIntegration):
                     "raw_input": target,
                     "is_valid": False,
                     "is_possible": False,
-                    "parse_error": error.error_type.name if error.error_type else str(error),
+                    "parse_error": getattr(error.error_type, "name", None)
+                    or str(error),
                 },
                 error_message=(
                     "Could not parse this as a phone number. Numbers "
@@ -98,6 +144,11 @@ class PhoneValidationIntegration(AsyncBaseIntegration):
             "number_type": _NUMBER_TYPE_LABELS.get(number_type, "unknown"),
             "carrier_name": carrier_name,
             "timezones": timezones,
+            # Set only when the input had no "+" and a default region
+            # (e.g. "IN") had to be assumed to parse it at all. Purely
+            # informational - see phone_service.py: assuming a country
+            # context is never itself a risk signal.
+            "assumed_country": assumed_region,
         }
 
         status = (

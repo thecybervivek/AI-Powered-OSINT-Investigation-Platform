@@ -4,6 +4,7 @@ import { FileIntelligence } from "./modules/FileIntelligence";
 import { DomainIntelligence } from "./modules/DomainIntelligence";
 import { UrlIntelligence } from "./modules/UrlIntelligence";
 import { UsernameIntelligence } from "./modules/UsernameIntelligence";
+import { PhoneIntelligence } from "./modules/PhoneIntelligence";
 
 interface IntelligenceSectionProps {
   investigation: Investigation;
@@ -12,13 +13,14 @@ interface IntelligenceSectionProps {
 /**
  * Renders a dedicated, module-specific summary above the generic
  * EvidenceList for the modules that have one. Every other module
- * (Email, IP, DNS, Phone, Social Media, Breach, Threat Intelligence,
+ * (Email, IP, DNS, Social Media, Breach, Threat Intelligence,
  * Malware, Composite Risk, Metadata) returns null here and is fully
  * represented by EvidenceList alone - not a regression, since
  * EvidenceList already shows every result for every type. Add a case
  * here only once a module's InvestigationResult.data shape has
  * actually been read from its service.py, the same way Reverse Image,
- * File, Domain, URL, and Username were for this implementation.
+ * File, Domain, URL, Username, and Phone (Phone Intelligence 2.0) were
+ * for this implementation.
  */
 export function IntelligenceSection({ investigation }: IntelligenceSectionProps) {
   if (investigation.investigation_type === "reverse_image") {
@@ -39,6 +41,10 @@ export function IntelligenceSection({ investigation }: IntelligenceSectionProps)
 
   if (investigation.investigation_type === "username") {
     return <UsernameIntelligence results={investigation.results} />;
+  }
+
+  if (investigation.investigation_type === "phone") {
+    return <PhoneIntelligence results={investigation.results} />;
   }
 
   return null;

@@ -36,11 +36,14 @@ async def investigate_phone(
     db: Session = Depends(get_db),
 ):
     """
-    Validates and enriches a phone number via offline libphonenumber
-    lookups (structural validity, E.164 formatting, region, carrier,
+    Runs Phone Intelligence 2.0: offline libphonenumber validation/
+    normalization (structural validity, E.164 formatting, region,
     number type, timezones), optionally cross-verified against
-    NumVerify's live carrier/line-type database, and persists a unified
-    investigation record with risk scoring.
+    NumVerify's live carrier/line-type database, plus Reputation,
+    Breach, and Public Intelligence layers where configured. Persists a
+    unified investigation record with an evidence-driven risk score -
+    validity, carrier, and country facts never contribute to risk on
+    their own; only confirmed reputation/breach findings do.
     """
 
     service = PhoneIntelligenceService(db)

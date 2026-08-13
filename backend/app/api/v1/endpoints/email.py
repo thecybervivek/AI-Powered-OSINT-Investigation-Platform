@@ -32,7 +32,7 @@ async def investigate_email(
 ):
     """
     Runs EmailRep, HaveIBeenPwned, Gravatar, MX/domain, disposable-
-    address, and holehe-style account-presence checks concurrently
+    address, and native account & social presence checks concurrently
     and persists a unified investigation record with per-source
     results. Google account intelligence is an optional slot that
     reports SKIPPED unless explicitly enabled (see GHuntIntegration).

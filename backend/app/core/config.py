@@ -207,6 +207,19 @@ class Settings(BaseSettings):
     NUMVERIFY_API_KEY: str = ""
     NUMVERIFY_BASE_URL: str = "http://apilayer.net/api/validate"
 
+    # Phone Intelligence 2.0 - Reputation, Breach, and Public Intelligence
+    # layers. All three are optional, key-gated sources with no built-in
+    # provider wired up yet: is_configured() is False until a real
+    # provider's key is set here, in which case the corresponding
+    # integration reports SKIPPED / "Not checked" rather than fabricating
+    # a clean result. DEHASHED_EMAIL/DEHASHED_API_KEY above (Milestone 9
+    # Part 4) are reused for phone breach lookups where DeHashed's search
+    # supports a phone query - no separate credential needed for that one.
+    PHONE_REPUTATION_API_KEY: str = ""
+    PHONE_REPUTATION_BASE_URL: str = ""
+    PHONE_PUBLIC_INTEL_API_KEY: str = ""
+    PHONE_PUBLIC_INTEL_BASE_URL: str = ""
+
     # ------------------------------------------------------
     # Milestone 9 Part 2 - Reverse Image Intelligence
     # ------------------------------------------------------

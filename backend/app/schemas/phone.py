@@ -19,8 +19,10 @@ class PhoneInvestigationRequest(BaseModel):
         max_length=32,
         description=(
             "A phone number, ideally in international format "
-            "(e.g. +14155552671). Numbers without a leading '+' must "
-            "already be in a recognizable international form."
+            "(e.g. +14155552671). Numbers without a leading '+' are "
+            "resolved against a default country context (currently "
+            "India) where possible - e.g. '9917891298' normalizes to "
+            "+919917891298."
         ),
     )
 
