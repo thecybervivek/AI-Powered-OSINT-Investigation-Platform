@@ -432,7 +432,7 @@ function RiskAssessmentSection({ assessment }: { assessment: Record<string, unkn
 // 7. Provider Status
 // ==========================================================
 
-const INTERNAL_ONLY_SOURCES = new Set(["risk_assessment", "phone_overview"]);
+const INTERNAL_ONLY_SOURCES = new Set(["risk_assessment", "phone_overview", "provider_status"]);
 
 const SOURCE_DISPLAY_NAME: Record<string, string> = {
   phone_validation: "Phone Validation",

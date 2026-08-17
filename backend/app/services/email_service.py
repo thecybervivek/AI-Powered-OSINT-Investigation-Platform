@@ -4,6 +4,9 @@ from datetime import timezone
 
 from sqlalchemy.orm import Session
 
+from backend.app.core.intelligence.evidence import from_module_result_status
+from backend.app.core.intelligence.status_semantics import InvestigationStatusOutcome
+from backend.app.core.intelligence.status_semantics import determine_status_from_evidence_states
 from backend.app.integrations.base import IntegrationResult
 from backend.app.integrations.email.disposable_integration import DisposableEmailIntegration
 from backend.app.integrations.email.emailrep_integration import EmailRepIntegration
@@ -32,6 +35,32 @@ _ENGINES = [
     AccountPresenceIntegration(),
     GHuntIntegration(),
 ]
+
+# Provider Status categorization (spec section 7) - a static lookup
+# rather than a field on every integration class, so this one file is
+# the single place that changes when a source is recategorized.
+_PROVIDER_CATEGORY: dict[str, str] = {
+    "mx_lookup": "email_validation",
+    "disposable_email": "email_validation",
+    "account_presence": "account_presence",
+    "emailrep": "reputation",
+    "gravatar": "identity",
+    "hibp": "breach_intelligence",
+    "ghunt": "identity",
+}
+
+
+def _with_category(result: IntegrationResult) -> IntegrationResult:
+    """
+    Backfills `category` from the static _PROVIDER_CATEGORY lookup when
+    an engine result didn't set one itself. Non-destructive - a result
+    that already set its own category is left untouched.
+    """
+
+    if result.category is None:
+        result.category = _PROVIDER_CATEGORY.get(result.source)
+
+    return result
 
 
 class EmailIntelligenceService:
@@ -102,11 +131,13 @@ class EmailIntelligenceService:
         presence_summary = summarize_findings(findings)
 
         risk_score, risk_notes = self._compute_risk_score(results_by_source)
+        informational_findings = self._compute_informational_findings(results_by_source)
 
         overall_status = self._overall_status(engine_results)
 
         summary = self._build_summary(
             email, results_by_source, risk_notes, presence_summary,
+            informational_findings=informational_findings,
         )
 
         # Persisted, structured explanation rows - mirrors the Domain/
@@ -124,6 +155,11 @@ class EmailIntelligenceService:
                     "risk_score": risk_score,
                     "risk_level": risk_level_from_score(risk_score).value,
                     "contributing_evidence": risk_notes,
+                    # Configuration/hygiene findings (e.g. missing MX) -
+                    # kept in their own key, never merged into
+                    # contributing_evidence, so nothing downstream can
+                    # mistake "hygiene" for "risk" (audit finding).
+                    "informational_findings": informational_findings,
                 },
             )
         )
@@ -134,6 +170,25 @@ class EmailIntelligenceService:
                 source="account_presence_summary",
                 status=ModuleResultStatus.SUCCESS,
                 data={"email": email, **presence_summary},
+            )
+        )
+
+        # Provider Status (spec section 7/11): one row per engine with
+        # the full status envelope (category/latency/timestamp/
+        # confidence/error reason/configuration reason), so the
+        # frontend can render a Provider Status section without
+        # re-deriving it from each raw per-source result.
+        self.repository.add_result(
+            InvestigationResult(
+                investigation_id=investigation.id,
+                source="provider_status",
+                status=ModuleResultStatus.SUCCESS,
+                data={
+                    "providers": [
+                        _with_category(r).to_provider_status_dict()
+                        for r in engine_results
+                    ],
+                },
             )
         )
 
@@ -150,21 +205,32 @@ class EmailIntelligenceService:
         self,
         engine_results: list[IntegrationResult],
     ) -> InvestigationStatus:
+        """
+        Delegates to the shared status_semantics.determine_status(),
+        which treats ANY non-conclusive provider-level result (FAILED,
+        RATE_LIMITED, UNABLE_TO_VERIFY, NO_DATA, PARTIAL) the same way
+        for this purpose - none of them is a completed observation.
+        Previously this only special-cased ModuleResultStatus.FAILED
+        specifically, which would have silently mis-reported an
+        investigation as COMPLETED if every non-conclusive provider
+        happened to be RATE_LIMITED rather than FAILED (a real, latent
+        gap - see base.py's IntegrationResult, which now actually
+        returns RATE_LIMITED instead of collapsing it into FAILED).
+        """
 
-        actionable = [
-            r for r in engine_results if r.status != ModuleResultStatus.SKIPPED
+        evidence_states = [
+            from_module_result_status(r.status)
+            for r in engine_results
+            if r.status != ModuleResultStatus.SKIPPED
         ]
 
-        if not actionable:
-            return InvestigationStatus.FAILED
+        outcome = determine_status_from_evidence_states(evidence_states)
 
-        if all(r.status == ModuleResultStatus.FAILED for r in actionable):
-            return InvestigationStatus.FAILED
-
-        if any(r.status == ModuleResultStatus.FAILED for r in actionable):
-            return InvestigationStatus.PARTIAL
-
-        return InvestigationStatus.COMPLETED
+        return {
+            InvestigationStatusOutcome.COMPLETED: InvestigationStatus.COMPLETED,
+            InvestigationStatusOutcome.PARTIAL: InvestigationStatus.PARTIAL,
+            InvestigationStatusOutcome.FAILED: InvestigationStatus.FAILED,
+        }[outcome]
 
     def _compute_risk_score(
         self,
@@ -179,10 +245,11 @@ class EmailIntelligenceService:
         Deliberately NEVER reads "account_presence" or "gravatar" data
         here: an account existing on a platform is discoverability,
         not a risk signal on its own (see module docstring). A
-        provider being SKIPPED (e.g. google_intelligence with no
-        session configured), RATE_LIMITED, or FAILED never subtracts
-        or adds either - only conclusive SUCCESS data above
-        contributes.
+        provider being SKIPPED (e.g. ghunt with no session
+        configured), RATE_LIMITED, or FAILED never subtracts or adds
+        either - only conclusive SUCCESS data above contributes.
+        Missing MX records are also never scored here - see
+        _compute_informational_findings.
         """
 
         score = 0.0
@@ -230,13 +297,31 @@ class EmailIntelligenceService:
                 score += 10
                 notes.append("disposable email provider")
 
+        return clamp(score), notes
+
+    def _compute_informational_findings(
+        self,
+        results: dict[str, IntegrationResult],
+    ) -> list[str]:
+        """
+        Configuration/hygiene findings - observations worth showing the
+        investigator but that must NOT contribute to the security risk
+        score (audit finding: a missing MX record was previously scored
+        as +10 risk here, but a domain not accepting mail is a mail-
+        configuration fact, not evidence of fraud/scam/compromise/abuse
+        on its own). Kept entirely separate from _compute_risk_score's
+        notes so it can never be mistaken for - or accidentally folded
+        back into - a risk signal.
+        """
+
+        findings: list[str] = []
+
         mx = results.get("mx_lookup")
 
         if mx and mx.status == ModuleResultStatus.NOT_FOUND:
-            score += 10
-            notes.append("domain does not accept mail (no MX records)")
+            findings.append("domain does not accept mail (no MX records)")
 
-        return clamp(score), notes
+        return findings
 
     def _build_summary(
         self,
@@ -244,6 +329,7 @@ class EmailIntelligenceService:
         results: dict[str, IntegrationResult],
         risk_notes: list[str],
         presence_summary: dict,
+        informational_findings: list[str] | None = None,
     ) -> str:
         """
         Implements the four explicit summary cases:
@@ -258,6 +344,11 @@ class EmailIntelligenceService:
 
         Never claims "no breach found" if HIBP/EmailRep were not
         actually checked.
+
+        `informational_findings` (e.g. missing MX) never changes which
+        of the four cases fires - they are configuration/hygiene facts,
+        not risk signals - and is only ever appended as a trailing,
+        clearly-labeled sentence.
         """
 
         confirmed_accounts = presence_summary.get("confirmed_accounts", [])
@@ -304,5 +395,11 @@ class EmailIntelligenceService:
         if confirmed_accounts and breach_notes:
             platform_names = ", ".join(p["platform"] for p in confirmed_accounts)
             message += f" Registered account(s) also detected on: {platform_names}."
+
+        if informational_findings:
+            message += (
+                " Configuration/hygiene note(s) (not a security risk): "
+                + "; ".join(informational_findings) + "."
+            )
 
         return message

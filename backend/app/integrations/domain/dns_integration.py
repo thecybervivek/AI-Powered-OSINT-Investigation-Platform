@@ -8,7 +8,16 @@ from backend.app.integrations.base import IntegrationResult
 from backend.app.integrations.exceptions import IntegrationTimeoutError
 from backend.app.models.investigation import ModuleResultStatus
 
-_RECORD_TYPES = ("A", "AAAA", "MX", "TXT", "NS", "CNAME", "SOA", "CAA")
+_RECORD_TYPES = ("A", "AAAA", "MX", "TXT", "NS", "CNAME", "SOA", "CAA", "SRV")
+
+# Queried separately from _RECORD_TYPES: presence-only DNSSEC check.
+# This is NOT full DNSSEC chain-of-trust validation (that requires
+# validating signatures up to a trust anchor, a materially bigger
+# undertaking) - it only reports whether DS records exist at the
+# parent zone and DNSKEY records exist at the domain's own
+# authoritative servers, which is what spec section 5 asks for
+# ("DS/DNSKEY presence where appropriate").
+_DNSSEC_RECORD_TYPES = ("DS", "DNSKEY")
 
 
 class DNSLookupIntegration(AsyncBaseIntegration):
@@ -73,8 +82,42 @@ class DNSLookupIntegration(AsyncBaseIntegration):
                 "domain": domain,
                 "domain_exists": domain_exists,
                 "records": records,
+                "dnssec": await self._check_dnssec_presence(resolver, domain),
             },
         )
+
+    @staticmethod
+    async def _check_dnssec_presence(resolver, domain: str) -> dict:
+        """
+        Presence-only check (see _DNSSEC_RECORD_TYPES docstring above) -
+        NOT full DNSSEC validation. Each record type is queried
+        independently and never raises: NXDOMAIN/NoAnswer/Timeout all
+        mean "not observed", not "check failed", since most domains
+        legitimately don't have DNSSEC deployed at all.
+        """
+
+        presence: dict[str, bool] = {}
+
+        for record_type in _DNSSEC_RECORD_TYPES:
+
+            try:
+                await resolver.resolve(domain, record_type)
+                presence[record_type] = True
+
+            except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+                presence[record_type] = False
+
+            except (dns.exception.Timeout, dns.exception.DNSException):
+                # Genuinely couldn't determine this one - distinct from
+                # a confirmed absence, so it's left out of `presence`
+                # entirely rather than defaulted to False.
+                continue
+
+        return {
+            "ds_present": presence.get("DS"),
+            "dnskey_present": presence.get("DNSKEY"),
+            "signed": bool(presence.get("DS")) and bool(presence.get("DNSKEY")),
+        }
 
     @staticmethod
     def _format_record(record_type: str, record) -> str:

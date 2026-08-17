@@ -30,7 +30,7 @@ class GHuntIntegration(AsyncBaseIntegration):
     to accept the above trade-offs.
     """
 
-    source_name = "google_intelligence"
+    source_name = "ghunt"
 
     def is_configured(self) -> bool:
         return bool(settings.GHUNT_SESSION_CONFIGURED)

@@ -24,12 +24,43 @@ export const EVIDENCE_STATUS_META: Record<ModuleResultStatus, EvidenceStatusMeta
       "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300",
     retryable: false,
   },
+  found: {
+    label: "Found",
+    defaultReason: "This source ran and positively confirmed the target.",
+    badgeClassName:
+      "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300",
+    retryable: false,
+  },
   not_found: {
     label: "Not Found",
     defaultReason:
       "This source ran and did not find the target. This does not confirm the target is safe elsewhere.",
     badgeClassName:
       "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
+    retryable: false,
+  },
+  partial: {
+    label: "Partial",
+    defaultReason:
+      "This source ran but only returned an incomplete result. Treat as inconclusive, not as a finding.",
+    badgeClassName:
+      "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+    retryable: true,
+  },
+  unable_to_verify: {
+    label: "Unable to Verify",
+    defaultReason:
+      "This source was reached but could not reach a conclusion. This is not a finding either way.",
+    badgeClassName:
+      "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+    retryable: true,
+  },
+  no_data: {
+    label: "No Data",
+    defaultReason:
+      "This source ran successfully but has no data at all for this target - not the same as a confirmed Not Found.",
+    badgeClassName:
+      "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
     retryable: false,
   },
   skipped: {

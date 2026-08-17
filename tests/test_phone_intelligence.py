@@ -464,6 +464,41 @@ def test_overall_status_completed_when_only_optional_sources_skipped():
     assert service._overall_status(engine_results).value == "completed"
 
 
+def test_overall_status_partial_when_a_provider_is_rate_limited():
+    """
+    Regression test: base.py previously collapsed IntegrationRateLimitError
+    into a generic FAILED, so RATE_LIMITED never actually appeared here in
+    practice and _overall_status's hand-written `== ModuleResultStatus.FAILED`
+    check happened to be exercised by every non-conclusive case. Now that
+    base.py returns RATE_LIMITED distinctly, _overall_status must still
+    treat it as non-conclusive (not silently report COMPLETED).
+    """
+
+    service = _service()
+
+    engine_results = [
+        IntegrationResult(source="phone_validation", status=ModuleResultStatus.SUCCESS, data={}),
+        IntegrationResult(source="numverify", status=ModuleResultStatus.RATE_LIMITED, data={}),
+        IntegrationResult(source="phone_reputation", status=ModuleResultStatus.SKIPPED, data={}),
+        IntegrationResult(source="phone_breach", status=ModuleResultStatus.SKIPPED, data={}),
+        IntegrationResult(source="phone_public_intelligence", status=ModuleResultStatus.SKIPPED, data={}),
+    ]
+
+    assert service._overall_status(engine_results).value == "partial"
+
+
+def test_overall_status_failed_when_every_actionable_provider_is_rate_limited():
+
+    service = _service()
+
+    engine_results = [
+        IntegrationResult(source="phone_validation", status=ModuleResultStatus.RATE_LIMITED, data={}),
+        IntegrationResult(source="numverify", status=ModuleResultStatus.SKIPPED, data={}),
+    ]
+
+    assert service._overall_status(engine_results).value == "failed"
+
+
 # ==========================================================
 # Summary text
 # ==========================================================

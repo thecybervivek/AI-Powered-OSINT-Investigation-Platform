@@ -10,10 +10,14 @@ import dns.resolver
 from sqlalchemy.orm import Session
 
 from backend.app.integrations.base import IntegrationResult
+from backend.app.core.intelligence.evidence import from_module_result_status
+from backend.app.core.intelligence.status_semantics import InvestigationStatusOutcome
+from backend.app.core.intelligence.status_semantics import determine_status_from_evidence_states
 from backend.app.integrations.domain._ip_extraction import extract_public_ips
 from backend.app.integrations.domain._ip_extraction import is_public_ip
 from backend.app.integrations.domain.asn_integration import ASNLookupIntegration
 from backend.app.integrations.domain.dns_integration import DNSLookupIntegration
+from backend.app.integrations.domain.email_security_integration import EmailSecurityIntegration
 from backend.app.integrations.domain.geolocation_integration import IPGeolocationIntegration
 from backend.app.integrations.domain.reverse_dns_integration import ReverseDNSIntegration
 from backend.app.integrations.domain.ssl_integration import SSLCertificateIntegration
@@ -32,6 +36,7 @@ from backend.app.models.investigation import InvestigationResult
 from backend.app.models.investigation import InvestigationStatus
 from backend.app.models.investigation import InvestigationType
 from backend.app.models.investigation import ModuleResultStatus
+from backend.app.models.investigation import RiskLevel
 from backend.app.repositories.investigation_repository import InvestigationRepository
 from backend.app.utils.risk_scoring import clamp
 from backend.app.utils.risk_scoring import risk_level_from_score
@@ -44,6 +49,7 @@ _DOMAIN_SCOPED_SOURCES = (
     "technology_detection",
     "certificate_transparency",
     "securitytrails",
+    "email_security",
 )
 
 # Capabilities that require a resolved public IP. These are the exact
@@ -108,6 +114,7 @@ class DomainIntelligenceService:
         self.technology_detection = TechnologyDetectionIntegration()
         self.certificate_transparency = CertificateTransparencyIntegration()
         self.securitytrails = SecurityTrailsIntegration()
+        self.email_security = EmailSecurityIntegration()
 
         self.asn_lookup = ASNLookupIntegration()
         self.ip_geolocation = IPGeolocationIntegration()
@@ -194,6 +201,7 @@ class DomainIntelligenceService:
             self.technology_detection.run(domain),
             self.certificate_transparency.run(domain),
             self.securitytrails.run(domain),
+            self.email_security.run(domain),
         ]
 
         ip_jobs: list[tuple[str, str]] = []  # (base_source, ip)
@@ -311,15 +319,47 @@ class DomainIntelligenceService:
             for base_source in _IP_SCOPED_THREAT_SOURCES
         }
 
-        assessment = _build_threat_assessment(threat_results_by_source)
+        assessment = _build_threat_assessment(
+            threat_results_by_source,
+            checked_ip=primary_ip,
+            public_ip_count=len(public_ips),
+        )
         self._persist(investigation.id, assessment)
 
-        # Legacy numeric fields, kept for backward compatibility with
-        # any existing caller (list views, badges) that reads
-        # risk_score/risk_level - but per the task, these are no longer
-        # the PRIMARY conclusion for Domain Investigation; the
-        # assessment result row and summary text are.
-        risk_score, risk_notes = _compute_hygiene_score(domain_results_by_source)
+        # Audit fix: investigation.risk_score/.risk_level - the fields
+        # every other module and composite_risk_service.py already
+        # treat as genuine security-risk evidence - now come from the
+        # actual threat assessment above, never from hygiene facts
+        # (expired TLS, missing DNSSEC, etc). See
+        # _risk_from_threat_assessment's docstring for the full
+        # rationale and why inconclusive/incomplete states correctly
+        # yield (None, None) rather than a misleading 0.
+        risk_score, risk_level = _risk_from_threat_assessment(assessment.data)
+
+        # Configuration/hygiene stays fully separate - scored purely
+        # for its own persisted row (below) and the summary text, and
+        # never contributes to investigation.risk_score/.risk_level.
+        hygiene_score, hygiene_notes, informational_findings = _compute_hygiene_score(
+            domain_results_by_source,
+        )
+
+        # Structured, persisted hygiene/informational row - mirrors the
+        # Email/Phone modules' risk_assessment row pattern, and keeps
+        # scored hygiene notes visibly separate from purely-
+        # informational findings (spec section 17), rather than only
+        # ever existing as prose inside `summary`.
+        self._persist(
+            investigation.id,
+            IntegrationResult(
+                source="hygiene_assessment",
+                status=ModuleResultStatus.SUCCESS,
+                data={
+                    "hygiene_score": hygiene_score,
+                    "scored_notes": hygiene_notes,
+                    "informational_findings": informational_findings,
+                },
+            ),
+        )
 
         all_persisted = (
             [dns_result, *domain_results]
@@ -330,7 +370,8 @@ class DomainIntelligenceService:
 
         summary = _build_summary(
             assessment_data=assessment.data,
-            hygiene_notes=risk_notes,
+            hygiene_notes=hygiene_notes,
+            informational_findings=informational_findings,
             public_ips=public_ips,
             whois_data=domain_results_by_source.get("whois").data
             if domain_results_by_source.get("whois")
@@ -344,7 +385,7 @@ class DomainIntelligenceService:
             investigation,
             status=overall_status,
             risk_score=risk_score,
-            risk_level=risk_level_from_score(risk_score),
+            risk_level=risk_level,
             summary=summary,
             completed_at=datetime.now(timezone.utc),
         )
@@ -503,6 +544,9 @@ def _build_ip_summary(
 
 def _build_threat_assessment(
     threat_results: dict[str, IntegrationResult | None],
+    *,
+    checked_ip: str | None = None,
+    public_ip_count: int = 0,
 ) -> IntegrationResult:
     """
     Evidence-backed assessment state, replacing a bare risk score as
@@ -517,6 +561,14 @@ def _build_threat_assessment(
 
     "no_malicious_evidence_detected" is never rendered or reasoned
     about as "safe" - see the label text and the frontend renderer.
+
+    `checked_ip`/`public_ip_count` make the primary-IP-only scope
+    explicit in the persisted evidence itself (audit finding: threat/
+    reputation providers only ever ran against the primary resolved
+    IP - by design, to keep provider call volume bounded - but that
+    limitation previously lived only in a code comment, invisible to
+    an investigator reading the results when a domain resolves to
+    multiple addresses).
     """
 
     reasoning: list[str] = []
@@ -630,24 +682,102 @@ def _build_threat_assessment(
             "providers_consulted": providers_consulted,
             "providers_unavailable": providers_unavailable,
             "providers_failed": providers_failed,
+            "checked_ip": checked_ip,
+            "public_ip_count": public_ip_count,
+            "scope_note": (
+                (
+                    f"Threat/reputation providers were checked against the "
+                    f"primary resolved IP only ({checked_ip})."
+                    + (
+                        f" {public_ip_count - 1} other resolved public IP(s) "
+                        "were not checked."
+                        if public_ip_count > 1
+                        else ""
+                    )
+                )
+                if checked_ip
+                else (
+                    "No public IP was resolved for this domain, so no "
+                    "threat/reputation provider had a target to check."
+                )
+            ),
         },
     )
 
 
+def _risk_from_threat_assessment(
+    assessment_data: dict,
+) -> tuple[float | None, RiskLevel | None]:
+    """
+    Audit fix: `investigation.risk_score`/`.risk_level` - the fields
+    every other module (Email, Phone, composite risk aggregation,
+    dashboard, list view, report badges) already treats as genuine
+    security-risk evidence - were previously sourced from
+    _compute_hygiene_score (TLS/DNS/WHOIS configuration facts), not
+    from _build_threat_assessment's actual threat-feed evidence. That
+    let a purely cosmetic issue (an expired cert) drive the same
+    numeric field that composite_risk_service.py explicitly treats as
+    "trustworthy evidence" and averages across a user's investigations.
+
+    This is now the ONLY source for those two fields. Hygiene stays
+    fully separate (see _compute_hygiene_score / the persisted
+    "hygiene_assessment" result row) and never feeds this function.
+
+    malicious/suspicious get a concrete score (consistent with every
+    other module's "found risk-relevant evidence" -> nonzero score
+    convention). no_malicious_evidence_detected gets 0.0/LOW - a real,
+    evidence-backed "nothing found" result, exactly like Email/Phone
+    scoring 0 when their own risk-relevant providers ran and found
+    nothing (this is NOT the same as claiming "safe" - see this
+    module's own state label and summary wording, which never uses
+    that word). inconclusive/threat_assessment_incomplete return
+    (None, None) rather than defaulting to 0 - there is no trustworthy
+    numeric verdict to report when providers never actually ran or
+    never completed, and (None, None) is the established convention
+    this codebase already uses for exactly that situation (see
+    UsernameIntelligenceService, IPIntelligenceService).
+    """
+
+    state = assessment_data.get("state")
+
+    if state == "malicious":
+        return 80.0, risk_level_from_score(80.0)
+
+    if state == "suspicious":
+        return 45.0, risk_level_from_score(45.0)
+
+    if state == "no_malicious_evidence_detected":
+        return 0.0, risk_level_from_score(0.0)
+
+    # inconclusive / threat_assessment_incomplete
+    return None, None
+
+
 def _compute_hygiene_score(
     results: dict[str, IntegrationResult],
-) -> tuple[float, list[str]]:
+) -> tuple[float, list[str], list[str]]:
     """
     Kept from the original implementation, unchanged in logic: flags
     exposure/hygiene issues (expired/invalid TLS, non-resolving domain,
-    unregistered domain). This backs the legacy risk_score/risk_level
-    fields for backward compatibility with existing callers - it is
-    NOT the primary conclusion presented for Domain Investigation
-    anymore; _build_threat_assessment's evidence-backed state is.
+    unregistered domain) and scores them.
+
+    Audit fix: this score no longer feeds investigation.risk_score/
+    .risk_level (see _risk_from_threat_assessment - that field is now
+    sourced exclusively from actual threat-feed evidence). This
+    function's output is ONLY persisted in the "hygiene_assessment"
+    result row and the summary's hygiene sentence - it is
+    Configuration/Hygiene, explicitly not a security-risk verdict.
+
+    Returns (score, scored_notes, informational_findings) - kept as
+    two separate lists (spec section 17: "Keep these categories
+    separate") rather than one flat list, so a caller/reader can never
+    conflate a note that actually contributed to `score` with one of
+    the purely-informational Email Security Posture / DNSSEC / young-
+    domain findings added below, which always contribute 0.
     """
 
     score = 0.0
-    notes: list[str] = []
+    scored_notes: list[str] = []
 
     ssl_result = results.get("ssl_certificate")
 
@@ -655,48 +785,121 @@ def _compute_hygiene_score(
 
         if not ssl_result.data.get("certificate_valid", True):
             score += 25
-            notes.append("TLS certificate failed verification")
+            scored_notes.append("TLS certificate failed verification")
 
         elif ssl_result.data.get("is_expired"):
             score += 20
-            notes.append("TLS certificate is expired")
+            scored_notes.append("TLS certificate is expired")
 
     dns_result = results.get("dns_lookup")
 
     if dns_result and dns_result.status == ModuleResultStatus.NOT_FOUND:
         score += 15
-        notes.append("domain does not resolve")
+        scored_notes.append("domain does not resolve")
 
     whois_result = results.get("whois")
 
     if whois_result and whois_result.status == ModuleResultStatus.NOT_FOUND:
         score += 10
-        notes.append("domain is unregistered")
+        scored_notes.append("domain is unregistered")
 
-    return clamp(score), notes
+    informational_findings = _compute_informational_findings(
+        results, dns_result, whois_result,
+    )
+
+    return clamp(score), scored_notes, informational_findings
+
+
+def _compute_informational_findings(
+    results: dict[str, IntegrationResult],
+    dns_result: IntegrationResult | None,
+    whois_result: IntegrationResult | None,
+) -> list[str]:
+    """
+    Configuration/hygiene findings only - never contributes to `score`
+    in _compute_hygiene_score, and never read by
+    _build_threat_assessment. Kept as its own function (rather than
+    inlined) so it's trivially clear from the call site that nothing
+    here is scored.
+    """
+
+    findings: list[str] = []
+
+    email_security = results.get("email_security")
+
+    if email_security and email_security.status == ModuleResultStatus.SUCCESS and email_security.data:
+
+        spf = email_security.data.get("spf") or {}
+        if not spf.get("present"):
+            findings.append("no SPF record found")
+
+        dmarc = email_security.data.get("dmarc") or {}
+        if not dmarc.get("present"):
+            findings.append("no DMARC record found")
+        elif dmarc.get("policy") == "none":
+            findings.append('DMARC policy is "p=none" (monitor-only, not enforced)')
+
+    if dns_result and dns_result.status == ModuleResultStatus.SUCCESS and dns_result.data:
+
+        dnssec = (dns_result.data or {}).get("dnssec") or {}
+        if dnssec.get("signed") is False:
+            findings.append("DNSSEC is not enabled for this domain")
+
+    technology = results.get("technology_detection")
+
+    if technology and technology.status == ModuleResultStatus.SUCCESS and technology.data:
+
+        security_headers = technology.data.get("security_headers") or {}
+        if not security_headers.get("strict-transport-security"):
+            findings.append("no HSTS (Strict-Transport-Security) header")
+
+        missing_others = [
+            header for header in (
+                "content-security-policy",
+                "x-content-type-options",
+                "x-frame-options",
+            )
+            if not security_headers.get(header)
+        ]
+        if missing_others:
+            findings.append(
+                "missing security header(s): " + ", ".join(missing_others)
+            )
+
+    if whois_result and whois_result.status == ModuleResultStatus.SUCCESS and whois_result.data:
+
+        age_days = whois_result.data.get("domain_age_days")
+        if isinstance(age_days, int) and age_days < 30:
+            findings.append(f"domain was registered recently ({age_days} day(s) ago)")
+
+    return findings
 
 
 def _overall_status(results: list[IntegrationResult]) -> InvestigationStatus:
     """
-    Unchanged semantics from the original implementation - SKIPPED
-    (not-applicable or not-configured) never counts toward degrading
-    status, so a module that's inherently not applicable (e.g. ASN
-    lookup for a domain with no public IP) cannot incorrectly mark the
-    investigation PARTIAL. Only an actual FAILED capability does that.
+    Delegates to the shared status_semantics.determine_status(), which
+    treats ANY non-conclusive provider-level result (FAILED,
+    RATE_LIMITED, UNABLE_TO_VERIFY, NO_DATA, PARTIAL) as non-conclusive
+    for this purpose - not just FAILED specifically. SKIPPED (not-
+    applicable or not-configured) never counts toward degrading status,
+    so a module that's inherently not applicable (e.g. ASN lookup for a
+    domain with no public IP) cannot incorrectly mark the investigation
+    PARTIAL. Only an actual non-conclusive capability does that.
     """
 
-    actionable = [r for r in results if r.status != ModuleResultStatus.SKIPPED]
+    evidence_states = [
+        from_module_result_status(r.status)
+        for r in results
+        if r.status != ModuleResultStatus.SKIPPED
+    ]
 
-    if not actionable:
-        return InvestigationStatus.FAILED
+    outcome = determine_status_from_evidence_states(evidence_states)
 
-    if all(r.status == ModuleResultStatus.FAILED for r in actionable):
-        return InvestigationStatus.FAILED
-
-    if any(r.status == ModuleResultStatus.FAILED for r in actionable):
-        return InvestigationStatus.PARTIAL
-
-    return InvestigationStatus.COMPLETED
+    return {
+        InvestigationStatusOutcome.COMPLETED: InvestigationStatus.COMPLETED,
+        InvestigationStatusOutcome.PARTIAL: InvestigationStatus.PARTIAL,
+        InvestigationStatusOutcome.FAILED: InvestigationStatus.FAILED,
+    }[outcome]
 
 
 def _build_summary(
@@ -706,6 +909,7 @@ def _build_summary(
     public_ips: list[str],
     whois_data: dict | None,
     ssl_data: dict | None,
+    informational_findings: list[str] | None = None,
 ) -> str:
     """
     An analyst-style conclusion, not a single generic sentence: what
@@ -724,6 +928,11 @@ def _build_summary(
             f"The domain resolves to {len(public_ips)} public IP address"
             f"{'es' if len(public_ips) != 1 else ''}."
         )
+
+        if len(public_ips) > 1:
+            scope_note = assessment_data.get("scope_note")
+            if scope_note:
+                sentences.append(scope_note)
     else:
         sentences.append("No public IP address was resolved for this domain.")
 
@@ -758,6 +967,13 @@ def _build_summary(
         sentences.append(
             "Additional infrastructure hygiene notes: "
             + "; ".join(hygiene_notes)
+            + "."
+        )
+
+    if informational_findings:
+        sentences.append(
+            "Configuration/hygiene note(s) (not a security risk): "
+            + "; ".join(informational_findings)
             + "."
         )
 

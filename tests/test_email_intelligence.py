@@ -20,11 +20,14 @@ from backend.app.integrations.email.base_checker import make_blocked_platform
 from backend.app.integrations.email.checkers import ALL_CHECKERS
 from backend.app.integrations.email.checkers.github import _check_github
 from backend.app.integrations.email.checkers.soundcloud import _check_soundcloud
+from backend.app.integrations.email.ghunt_integration import GHuntIntegration
 from backend.app.integrations.email.normalization import normalize_and_correlate
 from backend.app.integrations.email.normalization import summarize_findings
 from backend.app.integrations.email.presence_integration import AccountPresenceIntegration
 from backend.app.models.investigation import ModuleResultStatus
 from backend.app.services.email_service import EmailIntelligenceService
+from backend.app.services.email_service import _ENGINES
+from backend.app.services.email_service import _PROVIDER_CATEGORY
 
 
 def _canned(source: str, status=ModuleResultStatus.SUCCESS, data=None) -> IntegrationResult:
@@ -33,6 +36,42 @@ def _canned(source: str, status=ModuleResultStatus.SUCCESS, data=None) -> Integr
 
 def _service() -> EmailIntelligenceService:
     return EmailIntelligenceService(db=None)
+
+
+# ==========================================================
+# Provider identity consistency (audit Issue 1): the Google/GHunt
+# provider must be declared, executable, produce evidence, and appear
+# in provider status under exactly one canonical identifier - no
+# phantom "google_intelligence" name that exists only in metadata but
+# is never actually the source_name a real result carries.
+# ==========================================================
+
+
+def test_ghunt_is_the_single_canonical_google_provider_identifier():
+
+    ghunt_engine = next(e for e in _ENGINES if isinstance(e, GHuntIntegration))
+
+    # declared == executable: the class actually wired into _ENGINES
+    # reports this exact source_name when it runs.
+    assert ghunt_engine.source_name == "ghunt"
+
+    # declared == provider category mapping
+    assert "ghunt" in _PROVIDER_CATEGORY
+
+    # no phantom identifier left behind anywhere _ENGINES/_PROVIDER_CATEGORY
+    # would reference it
+    assert "google_intelligence" not in _PROVIDER_CATEGORY
+    assert all(e.source_name != "google_intelligence" for e in _ENGINES)
+
+
+def test_ghunt_produces_a_provider_status_envelope_under_its_canonical_name():
+
+    result = asyncio.run(GHuntIntegration().run("person@example.com"))
+
+    assert result.source == "ghunt"
+
+    envelope = result.to_provider_status_dict()
+    assert envelope["provider"] == "ghunt"
 
 
 # ==========================================================
@@ -583,7 +622,7 @@ def test_failed_provider_does_not_increase_risk():
 
 
 def test_skipped_provider_does_not_increase_risk():
-    results = {"google_intelligence": _canned("google_intelligence", status=ModuleResultStatus.SKIPPED)}
+    results = {"ghunt": _canned("ghunt", status=ModuleResultStatus.SKIPPED)}
     score, notes = _service()._compute_risk_score(results)
     assert score == 0.0
     assert notes == []
@@ -594,6 +633,76 @@ def test_rate_limited_provider_does_not_increase_risk():
     score, notes = _service()._compute_risk_score(results)
     assert score == 0.0
     assert notes == []
+
+
+def test_missing_mx_is_not_scored_as_security_risk():
+    """
+    Audit fix: a domain with no MX records is a mail-configuration
+    fact, not evidence of fraud/scam/malicious intent/compromise/abuse
+    - it must contribute zero risk score and must not appear in
+    _compute_risk_score's notes (which feed the risk_assessment's
+    contributing_evidence).
+    """
+
+    results = {"mx_lookup": _canned("mx_lookup", status=ModuleResultStatus.NOT_FOUND)}
+
+    score, notes = _service()._compute_risk_score(results)
+
+    assert score == 0.0
+    assert notes == []
+    assert not any("mx" in n.lower() for n in notes)
+
+
+def test_missing_mx_is_surfaced_as_informational_finding_only():
+
+    results = {"mx_lookup": _canned("mx_lookup", status=ModuleResultStatus.NOT_FOUND)}
+
+    findings = _service()._compute_informational_findings(results)
+
+    assert any("mx" in f.lower() for f in findings)
+
+
+def test_genuine_security_evidence_still_contributes_to_risk_alongside_missing_mx():
+    """
+    The MX fix must not accidentally suppress real risk scoring for
+    other, genuinely risk-relevant providers evaluated at the same time.
+    """
+
+    results = {
+        "mx_lookup": _canned("mx_lookup", status=ModuleResultStatus.NOT_FOUND),
+        "hibp": _canned(
+            "hibp",
+            status=ModuleResultStatus.SUCCESS,
+            data={"breach_count": 2, "contains_sensitive_breach": True},
+        ),
+    }
+
+    score, notes = _service()._compute_risk_score(results)
+
+    assert score > 0
+    assert not any("mx" in n.lower() for n in notes)
+
+    findings = _service()._compute_informational_findings(results)
+    assert any("mx" in f.lower() for f in findings)
+
+
+def test_summary_labels_missing_mx_as_hygiene_not_risk():
+
+    service = _service()
+
+    results = {"mx_lookup": _canned("mx_lookup", status=ModuleResultStatus.NOT_FOUND)}
+    informational_findings = service._compute_informational_findings(results)
+
+    summary = service._build_summary(
+        "person@example.com",
+        results,
+        risk_notes=[],
+        presence_summary={"confirmed_accounts": []},
+        informational_findings=informational_findings,
+    )
+
+    assert "not a security risk" in summary.lower()
+    assert "risk signals for" not in summary.lower()
 
 
 # ==========================================================

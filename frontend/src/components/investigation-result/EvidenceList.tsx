@@ -12,7 +12,11 @@ interface EvidenceListProps {
 // not a claim that FAILED/SKIPPED sources are less important.
 const STATUS_ORDER: ModuleResultStatus[] = [
   "success",
+  "found",
   "not_found",
+  "no_data",
+  "partial",
+  "unable_to_verify",
   "rate_limited",
   "failed",
   "skipped",

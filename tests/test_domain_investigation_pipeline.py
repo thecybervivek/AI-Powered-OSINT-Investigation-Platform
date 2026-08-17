@@ -9,6 +9,7 @@ from backend.app.integrations.domain._ip_extraction import is_public_ip
 from backend.app.models.investigation import InvestigationStatus
 from backend.app.models.investigation import InvestigationType
 from backend.app.models.investigation import ModuleResultStatus
+from backend.app.models.investigation import RiskLevel
 from backend.app.services.domain_service import DomainIntelligenceService
 from backend.app.services.domain_service import _build_threat_assessment
 from backend.app.services.domain_service import _compute_hygiene_score
@@ -221,13 +222,28 @@ def test_overall_status_not_found_does_not_degrade_status():
     assert _overall_status(results) == InvestigationStatus.COMPLETED
 
 
+def test_overall_status_rate_limited_provider_is_partial_not_completed():
+    """
+    Regression test mirroring the same fix already applied to Email/
+    Phone: a RATE_LIMITED provider is non-conclusive and must degrade
+    status the same way FAILED does - not be silently treated as fine.
+    """
+
+    results = [
+        IntegrationResult("whois", ModuleResultStatus.SUCCESS),
+        IntegrationResult("securitytrails", ModuleResultStatus.RATE_LIMITED),
+    ]
+
+    assert _overall_status(results) == InvestigationStatus.PARTIAL
+
+
 # ==========================================================
 # Legacy hygiene score (kept for backward compatibility only)
 # ==========================================================
 
 
 def test_hygiene_score_flags_expired_certificate():
-    score, notes = _compute_hygiene_score(
+    score, notes, informational = _compute_hygiene_score(
         {
             "ssl_certificate": IntegrationResult(
                 "ssl_certificate",
@@ -239,10 +255,11 @@ def test_hygiene_score_flags_expired_certificate():
 
     assert score > 0
     assert any("expired" in note for note in notes)
+    assert informational == []
 
 
 def test_hygiene_score_zero_when_nothing_flagged():
-    score, notes = _compute_hygiene_score(
+    score, notes, informational = _compute_hygiene_score(
         {
             "ssl_certificate": IntegrationResult(
                 "ssl_certificate",
@@ -254,6 +271,7 @@ def test_hygiene_score_zero_when_nothing_flagged():
 
     assert score == 0
     assert notes == []
+    assert informational == []
 
 
 # ==========================================================
@@ -284,6 +302,7 @@ def _patch_all_integrations(service, dns_data):
     service.securitytrails.run = AsyncMock(
         return_value=_canned("securitytrails", status=ModuleResultStatus.SKIPPED)
     )
+    service.email_security.run = AsyncMock(return_value=_canned("email_security"))
     service.asn_lookup.run = AsyncMock(return_value=_canned("asn_lookup"))
     service.ip_geolocation.run = AsyncMock(return_value=_canned("ip_geolocation"))
     service.reverse_dns.run = AsyncMock(return_value=_canned("reverse_dns"))
@@ -449,6 +468,195 @@ def test_investigation_summary_does_not_present_bare_risk_score_as_conclusion(db
     assert "safe" not in investigation.summary.lower()
 
 
+# ==========================================================
+# Audit fix: risk_score/risk_level sourced from threat evidence only,
+# never from hygiene/configuration facts
+# ==========================================================
+
+
+def test_risk_score_comes_from_threat_assessment_not_hygiene(db_session, test_user):
+    """
+    Regression test for the exact audit finding: an expired TLS
+    certificate (a hygiene fact) must NOT drive investigation.risk_score
+    - only actual threat-feed evidence may. With every threat provider
+    SKIPPED (the default in _patch_all_integrations) and an expired
+    cert, the previous implementation would have produced a nonzero
+    risk_score; the fixed one must return None (no trustworthy verdict
+    available), never a hygiene-derived number.
+    """
+
+    service = DomainIntelligenceService(db_session)
+    _patch_all_integrations(service, {"A": ["93.184.216.34"], "AAAA": []})
+    service.ssl_certificate.run = AsyncMock(
+        return_value=_canned(
+            "ssl_certificate",
+            data={"certificate_valid": True, "is_expired": True},
+        )
+    )
+
+    investigation = asyncio.run(
+        service.investigate(
+            user_id=test_user.id,
+            target="example.com",
+            investigation_type=InvestigationType.DOMAIN,
+        )
+    )
+
+    assert investigation.risk_score is None
+    assert investigation.risk_level is None
+
+
+def test_risk_score_is_zero_when_threat_evidence_found_nothing(db_session, test_user):
+    """
+    When threat/reputation providers actually ran and found nothing,
+    risk_score is a real, evidence-backed 0 - not None (there IS a
+    trustworthy verdict here: providers were consulted).
+    """
+
+    service = DomainIntelligenceService(db_session)
+    _patch_all_integrations(service, {"A": ["93.184.216.34"], "AAAA": []})
+    service.shodan.run = AsyncMock(
+        return_value=_canned("shodan", data={"vulnerabilities": []})
+    )
+
+    investigation = asyncio.run(
+        service.investigate(
+            user_id=test_user.id,
+            target="example.com",
+            investigation_type=InvestigationType.DOMAIN,
+        )
+    )
+
+    assert investigation.risk_score == 0.0
+    assert investigation.risk_level is not None
+
+
+def test_risk_score_reflects_confirmed_malicious_threat_evidence(db_session, test_user):
+
+    service = DomainIntelligenceService(db_session)
+    _patch_all_integrations(service, {"A": ["93.184.216.34"], "AAAA": []})
+    service.greynoise.run = AsyncMock(
+        return_value=_canned(
+            "greynoise",
+            data={
+                "classification": "malicious",
+                "is_internet_noise": True,
+                "is_common_business_service": False,
+            },
+        )
+    )
+
+    investigation = asyncio.run(
+        service.investigate(
+            user_id=test_user.id,
+            target="example.com",
+            investigation_type=InvestigationType.DOMAIN,
+        )
+    )
+
+    assert investigation.risk_score is not None
+    assert investigation.risk_score > 0
+    assert investigation.risk_level in (RiskLevel.HIGH, RiskLevel.CRITICAL)
+
+
+def test_hygiene_findings_never_change_risk_score_regardless_of_severity(db_session, test_user):
+    """
+    Piles on every hygiene/informational finding at once (expired TLS,
+    non-resolving is not applicable here since we need IP resolution,
+    but missing SPF/DMARC/DNSSEC/security headers, unregistered is
+    mutually exclusive with expired-cert too) - risk_score must stay
+    None (no threat provider ran) no matter how many hygiene findings
+    exist.
+    """
+
+    service = DomainIntelligenceService(db_session)
+    _patch_all_integrations(service, {"A": ["93.184.216.34"], "AAAA": []})
+    service.ssl_certificate.run = AsyncMock(
+        return_value=_canned(
+            "ssl_certificate",
+            data={"certificate_valid": True, "is_expired": True},
+        )
+    )
+    service.email_security.run = AsyncMock(
+        return_value=_canned(
+            "email_security",
+            data={
+                "spf": {"present": False},
+                "dmarc": {"present": False},
+                "mta_sts": {"present": False},
+                "tls_rpt": {"present": False},
+                "dkim": {"selectors_checked": [], "selectors_found": []},
+            },
+        )
+    )
+
+    investigation = asyncio.run(
+        service.investigate(
+            user_id=test_user.id,
+            target="example.com",
+            investigation_type=InvestigationType.DOMAIN,
+        )
+    )
+
+    assert investigation.risk_score is None
+    assert investigation.risk_level is None
+    # But the hygiene/informational evidence is still visible somewhere.
+    hygiene_result = next(
+        r for r in investigation.results if r.source == "hygiene_assessment"
+    )
+    assert hygiene_result.data["hygiene_score"] > 0
+    assert any("SPF" in n or "spf" in n for n in hygiene_result.data["informational_findings"])
+
+
+# ==========================================================
+# Audit fix: primary-IP-only scope must be explicit, not just a
+# code comment
+# ==========================================================
+
+
+def test_threat_assessment_states_primary_ip_scope_explicitly():
+
+    assessment = _build_threat_assessment(
+        {"shodan": None, "censys": None, "greynoise": None, "otx": None},
+        checked_ip="93.184.216.34",
+        public_ip_count=3,
+    )
+
+    assert assessment.data["checked_ip"] == "93.184.216.34"
+    assert assessment.data["public_ip_count"] == 3
+    assert "primary resolved IP only" in assessment.data["scope_note"]
+    assert "93.184.216.34" in assessment.data["scope_note"]
+
+
+def test_threat_assessment_scope_note_when_no_public_ip():
+
+    assessment = _build_threat_assessment(
+        {"shodan": None, "censys": None, "greynoise": None, "otx": None},
+        checked_ip=None,
+        public_ip_count=0,
+    )
+
+    assert "No public IP was resolved" in assessment.data["scope_note"]
+
+
+def test_summary_mentions_primary_ip_scope_when_multiple_ips_resolve(db_session, test_user):
+
+    service = DomainIntelligenceService(db_session)
+    _patch_all_integrations(
+        service, {"A": ["93.184.216.34", "93.184.216.35"], "AAAA": []}
+    )
+
+    investigation = asyncio.run(
+        service.investigate(
+            user_id=test_user.id,
+            target="example.com",
+            investigation_type=InvestigationType.DOMAIN,
+        )
+    )
+
+    assert "primary resolved IP only" in investigation.summary
+
+
 def test_assessment_labels_match_exact_required_display_text():
     """
     Production polish requirement: exact display strings, while the
@@ -512,6 +720,7 @@ def test_build_summary_matches_analyst_report_tone():
         public_ips=["1.2.3.4"] * 10,
         whois_data={"registered": True, "creation_date": "1997-09-15T04:00:00Z"},
         ssl_data={"certificate_valid": True, "is_expired": False},
+        informational_findings=[],
     )
 
     assert "Threat assessment incomplete." in summary
@@ -537,10 +746,33 @@ def test_build_summary_no_malicious_evidence_never_says_safe():
         public_ips=["1.2.3.4"],
         whois_data=None,
         ssl_data=None,
+        informational_findings=[],
     )
 
     assert "safe" not in summary.lower()
     assert "No malicious indicators were identified" in summary
+
+
+def test_build_summary_labels_informational_findings_distinctly_from_hygiene():
+
+    summary = _build_summary(
+        assessment_data={
+            "state": "threat_assessment_incomplete",
+            "label": "Threat assessment incomplete",
+            "providers_consulted": [],
+            "providers_unavailable": [],
+            "providers_failed": [],
+            "reasoning": [],
+        },
+        hygiene_notes=[],
+        public_ips=[],
+        whois_data=None,
+        ssl_data=None,
+        informational_findings=["no SPF record found", "no DMARC record found"],
+    )
+
+    assert "Configuration/hygiene note(s) (not a security risk)" in summary
+    assert "no SPF record found" in summary
 
 
 def test_hygiene_score_domain_does_not_resolve_affects_summary(db_session, test_user):

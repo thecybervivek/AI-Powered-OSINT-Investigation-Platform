@@ -464,7 +464,7 @@ function RiskAssessmentSection({ assessment }: { assessment: Record<string, unkn
 // full data payload) - this is just the at-a-glance status column
 // requested alongside the other 4 sections.
 
-const INTERNAL_ONLY_SOURCES = new Set(["risk_assessment", "account_presence_summary"]);
+const INTERNAL_ONLY_SOURCES = new Set(["risk_assessment", "account_presence_summary", "provider_status"]);
 
 const SOURCE_DISPLAY_NAME: Record<string, string> = {
   account_presence: "Account & Social Presence",
@@ -473,7 +473,7 @@ const SOURCE_DISPLAY_NAME: Record<string, string> = {
   gravatar: "Gravatar",
   mx_lookup: "MX / Domain",
   disposable_email: "Disposable Address Check",
-  google_intelligence: "Google Intelligence",
+  ghunt: "Google Intelligence",
 };
 
 function ProviderStatusSection({ results }: { results: InvestigationResult[] }) {

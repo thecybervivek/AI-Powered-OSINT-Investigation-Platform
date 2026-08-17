@@ -62,12 +62,30 @@ _BODY_SIGNATURES: list[tuple[str, str]] = [
     ("googletagmanager.com", "Google Tag Manager"),
 ]
 
+# HTTP/HTTPS Intelligence (spec section 12). Presence/value is
+# reported as a fact - see _security_header_findings below for the
+# separate, deliberately non-scored informational-finding framing.
+# Kept case-insensitive: httpx headers are already case-insensitive on
+# lookup, this list is just the canonical display name.
+_SECURITY_HEADERS = (
+    "strict-transport-security",
+    "content-security-policy",
+    "x-content-type-options",
+    "x-frame-options",
+    "referrer-policy",
+    "permissions-policy",
+)
+
 
 class TechnologyDetectionIntegration(AsyncBaseIntegration):
     """
     Fetches the target's homepage and matches response headers and a
     capped slice of the body against known technology signatures
-    (server software, CMS, JS frameworks, hosting platforms).
+    (server software, CMS, JS frameworks, hosting platforms). Also
+    captures HTTP/HTTPS Intelligence (spec section 12) from the same
+    fetch: redirect chain, final URL, and security header presence -
+    kept in this single result rather than a second, duplicate fetch
+    of the same URL.
     """
 
     source_name = "technology_detection"
@@ -136,6 +154,19 @@ class TechnologyDetectionIntegration(AsyncBaseIntegration):
             "http_status": response.status_code,
             "technologies_detected": sorted(detected),
             "relevant_headers": headers_seen,
+            # HTTP/HTTPS Intelligence (spec section 12) - reuses this
+            # same fetch rather than making a second request to the
+            # same URL for a separate provider.
+            "final_url": str(response.url),
+            "redirected": bool(response.history),
+            "redirect_chain": [
+                {"status_code": r.status_code, "url": str(r.url)}
+                for r in response.history
+            ],
+            "security_headers": {
+                header: response.headers.get(header)
+                for header in _SECURITY_HEADERS
+            },
         }
 
         return IntegrationResult(

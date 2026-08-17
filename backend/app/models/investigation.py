@@ -56,11 +56,56 @@ class InvestigationStatus(str, Enum):
 
 
 class ModuleResultStatus(str, Enum):
+    """
+    Provider Status Model (spec section 7). Additive: SUCCESS/FAILED/
+    NOT_FOUND/RATE_LIMITED/SKIPPED already existed and keep their exact
+    meaning; FOUND/PARTIAL/UNABLE_TO_VERIFY/NO_DATA are new members
+    added to reach the spec's required vocabulary without repurposing
+    or removing any existing one (spec: "do not invent contradictory
+    states").
+
+    SUCCESS:           provider ran and returned a usable result. For a
+                        binary presence/absence check, prefer the more
+                        specific FOUND/NOT_FOUND over a bare SUCCESS so
+                        callers don't have to inspect `data` to know
+                        which case they're in.
+    FOUND:              provider ran and positively confirmed the thing
+                        being checked for (e.g. a confirmed account,
+                        a confirmed breach record).
+    NOT_FOUND:          provider ran, produced a conclusive negative
+                        result - a genuine "checked and it's not there".
+    PARTIAL:            provider ran and returned a usable-but-incomplete
+                        result (some sub-checks within this one provider
+                        succeeded, others didn't) - distinct from the
+                        Investigation-level PARTIAL in InvestigationStatus.
+    UNABLE_TO_VERIFY:   provider was reached but could not reach a
+                        conclusion (e.g. ambiguous/ratelimited-but-
+                        partial upstream response) - NOT the same as
+                        NOT_FOUND, and must never be read as a benign
+                        signal.
+    NO_DATA:            provider ran successfully but the upstream
+                        source has no data at all for this indicator
+                        (distinct from NOT_FOUND, which asserts a
+                        confirmed negative; NO_DATA makes no assertion
+                        either way).
+    RATE_LIMITED:       provider was reached but rejected the request
+                        for exceeding a rate limit - distinct from a
+                        generic FAILED (see base.py's IntegrationResult
+                        run() handling).
+    FAILED:             provider was attempted and encountered an error
+                        (timeout, non-2xx, network failure, etc).
+    SKIPPED:            provider was never attempted because it isn't
+                        configured/enabled.
+    """
 
     SUCCESS = "success"
-    FAILED = "failed"
+    FOUND = "found"
     NOT_FOUND = "not_found"
+    PARTIAL = "partial"
+    UNABLE_TO_VERIFY = "unable_to_verify"
+    NO_DATA = "no_data"
     RATE_LIMITED = "rate_limited"
+    FAILED = "failed"
     SKIPPED = "skipped"
 
 
@@ -215,7 +260,21 @@ class InvestigationResult(
     )
 
     status: Mapped[ModuleResultStatus] = mapped_column(
-        SqlEnum(ModuleResultStatus),
+        # Was SqlEnum(ModuleResultStatus) - the same native-Postgres-
+        # enum footgun documented at length in investigation_registry.py
+        # and already fixed once for investigation_type (see migration
+        # f1a2b3c4d5e6): SqlEnum without values_callable persists the
+        # member NAME ("SUCCESS"), not its .value ("success"), so this
+        # column's real Postgres enum labels have only ever been the
+        # uppercase names, and every one of the four new members added
+        # above would need its own `ALTER TYPE ... ADD VALUE` migration
+        # to become insertable. Switching to StringBackedEnum (see
+        # migration a3f5c9d2b6e4_convert_module_result_status_to_string)
+        # removes that class of bug the same way it was removed for
+        # investigation_type - new
+        # ModuleResultStatus members from here on are a one-line code
+        # change with zero database migration required.
+        StringBackedEnum(ModuleResultStatus, length=32),
         nullable=False,
     )
 

@@ -26,9 +26,13 @@ export type RiskLevel = "low" | "medium" | "high" | "critical";
 
 export type ModuleResultStatus =
   | "success"
-  | "failed"
+  | "found"
   | "not_found"
+  | "partial"
+  | "unable_to_verify"
+  | "no_data"
   | "rate_limited"
+  | "failed"
   | "skipped";
 
 export interface InvestigationResult {

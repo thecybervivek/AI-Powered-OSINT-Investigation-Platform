@@ -4,6 +4,9 @@ from datetime import timezone
 
 from sqlalchemy.orm import Session
 
+from backend.app.core.intelligence.evidence import from_module_result_status
+from backend.app.core.intelligence.status_semantics import InvestigationStatusOutcome
+from backend.app.core.intelligence.status_semantics import determine_status_from_evidence_states
 from backend.app.integrations.base import IntegrationResult
 from backend.app.integrations.phone.numverify_integration import NumVerifyIntegration
 from backend.app.integrations.phone.phone_breach_integration import PhoneBreachIntegration
@@ -28,6 +31,22 @@ _ENGINES = [
     PhoneBreachIntegration(),
     PhonePublicIntelligenceIntegration(),
 ]
+
+# Provider Status categorization (spec section 7) - see
+# EmailIntelligenceService's identical pattern for the rationale.
+_PROVIDER_CATEGORY: dict[str, str] = {
+    "phone_validation": "phone_validation",
+    "numverify": "carrier_lookup",
+    "phone_reputation": "reputation",
+    "phone_breach": "breach_intelligence",
+    "phone_public_intelligence": "public_intelligence",
+}
+
+
+def _with_category(result: IntegrationResult) -> IntegrationResult:
+    if result.category is None:
+        result.category = _PROVIDER_CATEGORY.get(result.source)
+    return result
 
 # Reputation categories that count as confirmed, evidence-driven
 # security signal (spec section 5/10). Any other key present in a
@@ -138,6 +157,22 @@ class PhoneIntelligenceService:
             )
         )
 
+        # Provider Status (spec section 7/11) - see EmailIntelligenceService
+        # for the identical pattern this mirrors.
+        self.repository.add_result(
+            InvestigationResult(
+                investigation_id=investigation.id,
+                source="provider_status",
+                status=ModuleResultStatus.SUCCESS,
+                data={
+                    "providers": [
+                        _with_category(r).to_provider_status_dict()
+                        for r in engine_results
+                    ],
+                },
+            )
+        )
+
         return self.repository.update(
             investigation,
             status=overall_status,
@@ -198,21 +233,27 @@ class PhoneIntelligenceService:
         self,
         engine_results: list[IntegrationResult],
     ) -> InvestigationStatus:
+        """
+        See EmailIntelligenceService._overall_status() for the full
+        rationale - delegates to the shared status_semantics module so
+        RATE_LIMITED/UNABLE_TO_VERIFY/NO_DATA/PARTIAL provider results
+        are treated as non-conclusive the same way FAILED already was,
+        instead of only special-casing FAILED specifically.
+        """
 
-        actionable = [
-            r for r in engine_results if r.status != ModuleResultStatus.SKIPPED
+        evidence_states = [
+            from_module_result_status(r.status)
+            for r in engine_results
+            if r.status != ModuleResultStatus.SKIPPED
         ]
 
-        if not actionable:
-            return InvestigationStatus.FAILED
+        outcome = determine_status_from_evidence_states(evidence_states)
 
-        if all(r.status == ModuleResultStatus.FAILED for r in actionable):
-            return InvestigationStatus.FAILED
-
-        if any(r.status == ModuleResultStatus.FAILED for r in actionable):
-            return InvestigationStatus.PARTIAL
-
-        return InvestigationStatus.COMPLETED
+        return {
+            InvestigationStatusOutcome.COMPLETED: InvestigationStatus.COMPLETED,
+            InvestigationStatusOutcome.PARTIAL: InvestigationStatus.PARTIAL,
+            InvestigationStatusOutcome.FAILED: InvestigationStatus.FAILED,
+        }[outcome]
 
     # ------------------------------------------------------
     # Risk scoring - evidence-driven only. See module docstring.

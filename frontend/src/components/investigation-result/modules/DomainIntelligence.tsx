@@ -9,17 +9,21 @@ interface DomainIntelligenceProps {
   results: InvestigationResult[];
 }
 
-const RECORD_TYPE_ORDER = ["A", "AAAA", "CNAME", "MX", "NS", "TXT", "SOA", "CAA"];
+const RECORD_TYPE_ORDER = ["A", "AAAA", "CNAME", "MX", "NS", "TXT", "SOA", "CAA", "SRV"];
 
 /**
  * Built strictly from what the rearchitected domain_service.py
  * actually persists (verified by reading that file directly - it was
  * rewritten in this same session, not assumed):
- *   dns_lookup               -> records: {A, AAAA, CNAME, MX, NS, TXT, SOA, CAA}
+ *   dns_lookup               -> records: {A, AAAA, CNAME, MX, NS, TXT, SOA, CAA, SRV},
+ *                                dnssec: {ds_present, dnskey_present, signed}
  *   whois                    -> registrar, dates, domain_statuses, dnssec,
  *                                domain_age_days, name_servers
  *   ssl_certificate          -> subject, issuer, validity, SANs, fingerprint
- *   technology_detection     -> technologies_detected, relevant_headers
+ *   email_security           -> spf, dmarc, mta_sts, tls_rpt, dkim (bounded,
+ *                                non-exhaustive selector check)
+ *   technology_detection     -> technologies_detected, relevant_headers,
+ *                                final_url, redirect_chain, security_headers
  *   certificate_transparency -> discovered subdomains (not "resolved")
  *   subdomain_resolution_sample -> a bounded resolved/unresolved sample
  *   ip_intelligence_summary  -> ASN/geolocation/reverse-DNS aggregated per
@@ -28,12 +32,19 @@ const RECORD_TYPE_ORDER = ["A", "AAAA", "CNAME", "MX", "NS", "TXT", "SOA", "CAA"
  *   threat_assessment        -> the evidence-backed assessment state that
  *                                replaces a bare risk score as the primary
  *                                conclusion for this module
+ *   hygiene_assessment       -> scored_notes (legacy hygiene score) kept
+ *                                distinct from informational_findings
+ *                                (missing SPF/DMARC, no DNSSEC, missing
+ *                                security headers, young domain) - the
+ *                                latter never contributes to any score
  */
 export function DomainIntelligence({ results }: DomainIntelligenceProps) {
   const dnsLookup = asRecord(findResult(results, "dns_lookup")?.data);
   const whois = asRecord(findResult(results, "whois")?.data);
   const ssl = asRecord(findResult(results, "ssl_certificate")?.data);
   const technology = asRecord(findResult(results, "technology_detection")?.data);
+  const emailSecurity = asRecord(findResult(results, "email_security")?.data);
+  const hygiene = asRecord(findResult(results, "hygiene_assessment")?.data);
   const ctResult = findResult(results, "certificate_transparency");
   const subdomainSample = asRecord(findResult(results, "subdomain_resolution_sample")?.data);
   const ipSummary = asRecord(findResult(results, "ip_intelligence_summary")?.data);
@@ -50,6 +61,8 @@ export function DomainIntelligence({ results }: DomainIntelligenceProps) {
 
       {ssl && <TlsSection ssl={ssl} />}
 
+      {emailSecurity && <EmailSecuritySection emailSecurity={emailSecurity} />}
+
       {technology && <TechnologySection technology={technology} />}
 
       {(ctResult || subdomainSample) && (
@@ -61,6 +74,8 @@ export function DomainIntelligence({ results }: DomainIntelligenceProps) {
       )}
 
       {assessment && <ThreatIntelligenceSection results={results} assessment={assessment} />}
+
+      {hygiene && <HygieneFindingsSection hygiene={hygiene} />}
     </div>
   );
 }
@@ -159,6 +174,7 @@ export function AssessmentBanner({ assessment }: { assessment: Record<string, un
 export function DnsRecordsSection({ dnsLookup }: { dnsLookup: Record<string, unknown> }) {
   const records = asRecord(dnsLookup.records) ?? {};
   const domainExists = asBoolean(dnsLookup.domain_exists);
+  const dnssec = asRecord(dnsLookup.dnssec);
 
   const nonEmptyTypes = RECORD_TYPE_ORDER.filter((type) => {
     const values = records[type];
@@ -192,6 +208,13 @@ export function DnsRecordsSection({ dnsLookup }: { dnsLookup: Record<string, unk
             </div>
           ))}
         </div>
+      )}
+
+      {dnssec && (
+        <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+          DNSSEC: {asBoolean(dnssec.signed) ? "signed (DS and DNSKEY present)" : "not enabled"}
+          {" "}— presence check only, not full chain-of-trust validation.
+        </p>
       )}
     </Section>
   );
@@ -334,6 +357,15 @@ export function TechnologySection({ technology }: { technology: Record<string, u
     ? (technology.technologies_detected as unknown[]).map(String)
     : [];
   const headers = asRecord(technology.relevant_headers) ?? {};
+  const securityHeaders = asRecord(technology.security_headers) ?? {};
+  const redirectChain = Array.isArray(technology.redirect_chain)
+    ? (technology.redirect_chain as Array<Record<string, unknown>>)
+    : [];
+  const finalUrl = asString(technology.final_url);
+
+  const missingSecurityHeaders = Object.entries(securityHeaders).filter(
+    ([, value]) => !value,
+  );
 
   return (
     <Section title="Technology">
@@ -367,6 +399,146 @@ export function TechnologySection({ technology }: { technology: Record<string, u
               </div>
             ))}
           </dl>
+        </div>
+      )}
+
+      {redirectChain.length > 0 && (
+        <div className="mt-3">
+          <p className="text-xs uppercase tracking-wide text-slate-400">
+            Redirect Chain
+          </p>
+          <ol className="mt-1 space-y-0.5 text-xs text-slate-600 dark:text-slate-400">
+            {redirectChain.map((hop, i) => (
+              <li key={i} className="break-all">
+                {String(hop.status_code)} → {String(hop.url)}
+              </li>
+            ))}
+            {finalUrl && <li className="break-all">Final: {finalUrl}</li>}
+          </ol>
+        </div>
+      )}
+
+      {Object.keys(securityHeaders).length > 0 && (
+        <div className="mt-3">
+          <p className="text-xs uppercase tracking-wide text-slate-400">
+            Security Configuration (headers)
+          </p>
+          <dl className="mt-1 space-y-0.5 text-xs text-slate-600 dark:text-slate-400">
+            {Object.entries(securityHeaders).map(([key, value]) => (
+              <div key={key} className="break-all">
+                <span className="font-mono">{key}</span>:{" "}
+                {value ? String(value) : "not present"}
+              </div>
+            ))}
+          </dl>
+          {missingSecurityHeaders.length > 0 && (
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              Missing header(s) are a configuration weakness, not by
+              themselves evidence this domain is malicious.
+            </p>
+          )}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+// ==========================================================
+// Email Security Posture
+// ==========================================================
+
+export function EmailSecuritySection({
+  emailSecurity,
+}: {
+  emailSecurity: Record<string, unknown>;
+}) {
+  const spf = asRecord(emailSecurity.spf) ?? {};
+  const dmarc = asRecord(emailSecurity.dmarc) ?? {};
+  const mtaSts = asRecord(emailSecurity.mta_sts) ?? {};
+  const tlsRpt = asRecord(emailSecurity.tls_rpt) ?? {};
+  const dkim = asRecord(emailSecurity.dkim) ?? {};
+  const dkimFound = Array.isArray(dkim.selectors_found)
+    ? (dkim.selectors_found as Array<Record<string, unknown>>)
+    : [];
+
+  return (
+    <Section title="Email Security Posture">
+      <FieldGrid
+        fields={[
+          ["SPF", asBoolean(spf.present) ? "Present" : "Not found"],
+          [
+            "DMARC",
+            asBoolean(dmarc.present)
+              ? `Present (p=${asString(dmarc.policy) ?? "unspecified"})`
+              : "Not found",
+          ],
+          ["MTA-STS", asBoolean(mtaSts.present) ? "Present" : "Not found"],
+          ["TLS-RPT", asBoolean(tlsRpt.present) ? "Present" : "Not found"],
+        ]}
+      />
+
+      <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+        DKIM: checked {Array.isArray(dkim.selectors_checked) ? dkim.selectors_checked.length : 0}{" "}
+        common selector name(s) only — {dkimFound.length > 0
+          ? `found under: ${dkimFound.map((d) => String(d.selector)).join(", ")}.`
+          : "none matched."}{" "}
+        Not exhaustive: a domain can use DKIM under a different selector
+        and still show no match here.
+      </p>
+
+      <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+        Missing or weak email authentication is a configuration
+        weakness, not by itself evidence of malicious intent.
+      </p>
+    </Section>
+  );
+}
+
+// ==========================================================
+// Hygiene / Informational Findings
+// ==========================================================
+
+export function HygieneFindingsSection({
+  hygiene,
+}: {
+  hygiene: Record<string, unknown>;
+}) {
+  const informational = Array.isArray(hygiene.informational_findings)
+    ? (hygiene.informational_findings as unknown[]).map(String)
+    : [];
+  const scored = Array.isArray(hygiene.scored_notes)
+    ? (hygiene.scored_notes as unknown[]).map(String)
+    : [];
+
+  if (informational.length === 0 && scored.length === 0) {
+    return null;
+  }
+
+  return (
+    <Section title="Informational / Configuration Findings">
+      {scored.length > 0 && (
+        <div>
+          <p className="text-xs uppercase tracking-wide text-slate-400">
+            Infrastructure Hygiene
+          </p>
+          <ul className="mt-1 list-inside list-disc text-sm text-slate-700 dark:text-slate-300">
+            {scored.map((note, i) => (
+              <li key={i}>{note}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {informational.length > 0 && (
+        <div className={scored.length > 0 ? "mt-3" : undefined}>
+          <p className="text-xs uppercase tracking-wide text-slate-400">
+            Configuration / Hygiene (not a security risk)
+          </p>
+          <ul className="mt-1 list-inside list-disc text-sm text-slate-700 dark:text-slate-300">
+            {informational.map((note, i) => (
+              <li key={i}>{note}</li>
+            ))}
+          </ul>
         </div>
       )}
     </Section>
@@ -407,7 +579,10 @@ function SubdomainSection({
           <p className="text-sm text-slate-600 dark:text-slate-400">
             {subdomains.length} discovered via Certificate Transparency logs
             (crt.sh) - names that appeared on a publicly issued certificate,
-            not necessarily still active.
+            not necessarily still active. This is passive, certificate-
+            observed discovery, not exhaustive subdomain enumeration: a
+            subdomain with no publicly logged certificate will not appear
+            here at all.
           </p>
 
           {sample && (
@@ -627,6 +802,7 @@ function ThreatIntelligenceSection({
   const failed = Array.isArray(assessment.providers_failed)
     ? (assessment.providers_failed as unknown[]).map(String)
     : [];
+  const scopeNote = asString(assessment.scope_note);
 
   const consultedRows = ["shodan", "censys", "greynoise", "otx"]
     .map((key) => {
@@ -653,6 +829,10 @@ function ThreatIntelligenceSection({
         <p className="text-sm text-slate-500 dark:text-slate-400">
           No threat intelligence provider returned data for this investigation.
         </p>
+      )}
+
+      {scopeNote && (
+        <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">{scopeNote}</p>
       )}
 
       {unavailableAll.length > 0 && (

@@ -74,6 +74,38 @@ def test_from_module_result_status_adapter():
     assert from_module_result_status("something_new") == EvidenceState.UNKNOWN
 
 
+def test_from_module_result_status_adapter_covers_new_provider_states():
+    """
+    FOUND/PARTIAL/UNABLE_TO_VERIFY/NO_DATA were added to
+    ModuleResultStatus for the provider status model upgrade (spec
+    section 7). FOUND is conclusive (like SUCCESS); the other three
+    were attempted but inconclusive, so none of them may be read as a
+    benign signal - only NOT_FOUND ever is. Each keeps its own distinct
+    EvidenceState (audit finding: collapsing them into one generic
+    UNKNOWN lost real investigation semantics) rather than merging into
+    a single bucket.
+    """
+
+    assert from_module_result_status(_FakeStatus("found")) == EvidenceState.SUCCESS
+
+    expected = {
+        "partial": EvidenceState.PARTIAL,
+        "unable_to_verify": EvidenceState.UNABLE_TO_VERIFY,
+        "no_data": EvidenceState.NO_DATA,
+    }
+
+    for value, evidence_state in expected.items():
+        state = from_module_result_status(_FakeStatus(value))
+        assert state == evidence_state, value
+        assert state.is_conclusive is False, value
+        assert state.counts_as_benign_signal is False, value
+
+    # And they must be distinguishable from each other and from a
+    # genuinely-unrecognized status - not silently merged back together.
+    assert len({EvidenceState.PARTIAL, EvidenceState.UNABLE_TO_VERIFY, EvidenceState.NO_DATA, EvidenceState.UNKNOWN}) == 4
+    assert from_module_result_status(_FakeStatus("totally_unrecognized_status")) == EvidenceState.UNKNOWN
+
+
 def test_evidence_to_dict_shape():
 
     ev = Evidence(
